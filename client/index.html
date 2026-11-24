@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/volleyball.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/fonts/scorebug-fonts.css" />
+    <title>Qwesie TV — Volleyball Live Score & Broadcast Graphics</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('qwesie-theme');
+          var dark = t !== 'light';
+          if (dark) document.documentElement.classList.add('dark');
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+          // Match the CSS token canvas on first paint to avoid a flash.
+          document.documentElement.style.backgroundColor = dark ? '#0b0d10' : '#f3f4f6';
+          document.documentElement.style.color = dark ? '#f3f4f6' : '#111827';
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen antialiased selection:bg-accent selection:text-accent-fg">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

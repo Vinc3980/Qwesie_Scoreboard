@@ -1,0 +1,336 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* Semantic console tokens (light) - WCAG AA oriented */
+    --app-background: #f3f4f6;
+    --app-surface: #ffffff;           /* surface / base card */
+    --app-surface-raised: #ffffff;    /* raised card/popover */
+    --app-surface-sunken: #e9edf3;    /* inset/subtle wells */
+    --app-surface-alt: #eceff3;       /* compat alias */
+    --app-foreground: #111827;              /* fg */
+    --app-muted: #4b5563;             /* fg-muted */
+    --app-subtle: #5b6472;            /* fg-subtle */
+    --app-border: #d6dbe3;
+    --app-border-strong: #6b7280;
+    --app-accent: #b45309;            /* darker amber for contrast on light surfaces/text */
+    --app-accent-hover: #92400e;
+    --app-accent-foreground: #ffffff;
+    --app-accent-subtle: rgba(180, 83, 9, 0.12);
+    --app-success: #065f46;
+    --app-success-fg: #ffffff;
+    --app-success-subtle: rgba(6, 95, 70, 0.12);
+    --app-warning: #92400e;
+    --app-warning-fg: #ffffff;
+    --app-warning-subtle: rgba(146, 64, 14, 0.14);
+    --app-danger: #b91c1c;
+    --app-danger-fg: #ffffff;
+    --app-danger-subtle: rgba(185, 28, 28, 0.12);
+    --app-info: #0369a1;
+    --app-info-fg: #ffffff;
+    --app-info-subtle: rgba(3, 105, 161, 0.12);
+    --app-focus: #b45309;
+    --app-live: #dc2626;
+    /* Console/chart and team identity helpers */
+    --app-team-a: #075985;
+    --app-team-b: #7e22ce;
+    --app-chart-grid: #d6dbe3;
+    --app-chart-axis: #6b7280;
+
+    /* RGB channel mirrors so Tailwind opacity modifiers (e.g. border-accent/40)
+       generate correctly. Keep these in sync with the hex values above. */
+    --app-background-rgb: 243 244 246;
+    --app-surface-rgb: 255 255 255;
+    --app-surface-raised-rgb: 255 255 255;
+    --app-surface-sunken-rgb: 233 237 243;
+    --app-surface-alt-rgb: 236 239 243;
+    --app-foreground-rgb: 17 24 39;
+    --app-muted-rgb: 75 85 99;
+    --app-subtle-rgb: 91 100 114;
+    --app-border-rgb: 214 219 227;
+    --app-border-strong-rgb: 107 114 128;
+    --app-accent-rgb: 180 83 9;
+    --app-accent-hover-rgb: 146 64 14;
+    --app-accent-foreground-rgb: 255 255 255;
+    --app-success-rgb: 6 95 70;
+    --app-success-fg-rgb: 255 255 255;
+    --app-warning-rgb: 146 64 14;
+    --app-warning-fg-rgb: 255 255 255;
+    --app-danger-rgb: 185 28 28;
+    --app-danger-fg-rgb: 255 255 255;
+    --app-info-rgb: 3 105 161;
+    --app-info-fg-rgb: 255 255 255;
+    --app-focus-rgb: 180 83 9;
+    --app-live-rgb: 220 38 38;
+    --app-team-a-rgb: 7 89 133;
+    --app-team-b-rgb: 126 34 206;
+
+    /* Broadcast design tokens (separate from operator console tokens) */
+    --broadcast-bg: #06080d;
+    --broadcast-surface: #0b0f17;
+    --broadcast-surface-2: #121826;
+    --broadcast-text: #f4f7fb;
+    --broadcast-muted: #b6c0d4;
+    --broadcast-safe-margin: 5%;
+    --broadcast-dur-fast: 160ms;
+    --broadcast-dur: 280ms;
+    --broadcast-dur-slow: 450ms;
+    --broadcast-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --team-a: #38bdf8;
+    --team-a-2: #0ea5e9;
+    --team-a-text: #ffffff;
+    --team-b: #c084fc;
+    --team-b-2: #a855f7;
+    --team-b-text: #ffffff;
+  }
+  .dark {
+    color-scheme: dark;
+    /* Semantic console tokens (dark) - elevation: page < card < raised */
+    --app-background: #0b0d10;                /* page */
+    --app-surface: #141821;           /* card */
+    --app-surface-raised: #1a2030;    /* raised card/popover */
+    --app-surface-sunken: #10141c;    /* inset/subtle wells */
+    --app-surface-alt: #1a2030;       /* compat alias */
+    --app-foreground: #f3f4f6;              /* fg */
+    --app-muted: #c5cedd;             /* fg-muted (>=4.5:1 on surfaces) */
+    --app-subtle: #9ca3af;            /* fg-subtle (use for secondary/large text carefully) */
+    --app-border: #2a3345;
+    --app-border-strong: #64748b;
+    --app-accent: #f59e0b;
+    --app-accent-hover: #d97706;
+    --app-accent-foreground: #111111;
+    --app-accent-subtle: rgba(245, 158, 11, 0.14);
+    --app-success: #34d399;
+    --app-success-fg: #052e1f;
+    --app-success-subtle: rgba(52, 211, 153, 0.14);
+    --app-warning: #fbbf24;
+    --app-warning-fg: #2a1a00;
+    --app-warning-subtle: rgba(251, 191, 36, 0.16);
+    --app-danger: #f87171;
+    --app-danger-fg: #2b0b0b;
+    --app-danger-subtle: rgba(248, 113, 113, 0.16);
+    --app-info: #38bdf8;
+    --app-info-fg: #062231;
+    --app-info-subtle: rgba(56, 189, 248, 0.14);
+    --app-focus: #f59e0b;
+    --app-live: #ef4444;
+    /* Console/chart and team identity helpers */
+    --app-team-a: #38bdf8;
+    --app-team-b: #c084fc;
+    --app-chart-grid: #2a3345;
+    --app-chart-axis: #9ca3af;
+
+    /* RGB channel mirrors so Tailwind opacity modifiers generate correctly. */
+    --app-background-rgb: 11 13 16;
+    --app-surface-rgb: 20 24 33;
+    --app-surface-raised-rgb: 26 32 48;
+    --app-surface-sunken-rgb: 16 20 28;
+    --app-surface-alt-rgb: 26 32 48;
+    --app-foreground-rgb: 243 244 246;
+    --app-muted-rgb: 197 206 221;
+    --app-subtle-rgb: 156 163 175;
+    --app-border-rgb: 42 51 69;
+    --app-border-strong-rgb: 100 116 139;
+    --app-accent-rgb: 245 158 11;
+    --app-accent-hover-rgb: 217 119 6;
+    --app-accent-foreground-rgb: 17 17 17;
+    --app-success-rgb: 52 211 153;
+    --app-success-fg-rgb: 5 46 31;
+    --app-warning-rgb: 251 191 36;
+    --app-warning-fg-rgb: 42 26 0;
+    --app-danger-rgb: 248 113 113;
+    --app-danger-fg-rgb: 43 11 11;
+    --app-info-rgb: 56 189 248;
+    --app-info-fg-rgb: 6 34 49;
+    --app-focus-rgb: 245 158 11;
+    --app-live-rgb: 239 68 68;
+    --app-team-a-rgb: 56 189 248;
+    --app-team-b-rgb: 192 132 252;
+  }
+  html {
+    /* Keep the document canvas in sync with the active theme so overscroll,
+       initial paint and native controls never fall back to browser defaults. */
+    background-color: var(--app-background);
+    color: var(--app-foreground);
+    min-height: 100%;
+  }
+  body {
+    @apply font-sans overflow-x-hidden;
+    background: var(--app-background);
+    color: var(--app-foreground);
+  }
+  /* Native form controls inherit the theme instead of the UA light defaults. */
+  input,
+  select,
+  textarea,
+  button {
+    color: inherit;
+  }
+  input,
+  select,
+  textarea {
+    background-color: var(--app-surface);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--app-subtle);
+  }
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background-color: var(--app-surface-alt);
+    color: var(--app-muted);
+    cursor: not-allowed;
+  }
+  input:disabled::placeholder,
+  textarea:disabled::placeholder {
+    color: var(--app-muted);
+  }
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  progress {
+    accent-color: var(--app-accent);
+  }
+  option,
+  optgroup {
+    background-color: var(--app-surface);
+    color: var(--app-foreground);
+  }
+  option:checked {
+    background-color: var(--app-accent);
+    color: var(--app-accent-foreground);
+  }
+  option:disabled {
+    color: var(--app-muted);
+  }
+  body.broadcast-transparent {
+    background: transparent !important;
+    background-color: transparent !important;
+  }
+  html:has(body.broadcast-transparent) {
+    background: transparent !important;
+  }
+
+  /* Variant A: Barlow Condensed for headings/labels, Inter for body */
+  h1, h2, h3, h4, .heading, .label-display {
+    font-family: "Barlow Condensed", Inter, system-ui, sans-serif;
+    letter-spacing: 0.01em;
+  }
+
+  /* Accessible focus ring (semantic token, theme-aware) */
+  :where(a, button, input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid var(--app-focus);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .app-panel {
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+    border-radius: 14px;
+  }
+  .app-panel-flat {
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+    border-radius: 14px;
+    box-shadow: none;
+  }
+  .app-panel-raised {
+    background: var(--app-surface-raised);
+    border: 1px solid var(--app-border);
+    border-radius: 14px;
+  }
+  .app-sunken {
+    background: var(--app-surface-sunken);
+    border: 1px solid var(--app-border);
+    border-radius: 12px;
+  }
+  .hairline-b {
+    border-bottom: 1px solid var(--app-border);
+  }
+  .hairline-t {
+    border-top: 1px solid var(--app-border);
+  }
+  .hairline {
+    border: 1px solid var(--app-border);
+  }
+  .num-tabular {
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+  }
+  .tally-dot {
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 9999px;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .broadcast-stage-root {
+    @apply w-screen h-screen overflow-hidden bg-transparent;
+  }
+  .broadcast-canvas {
+    width: 1920px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    background: transparent;
+    color: var(--broadcast-text);
+    font-family: "Barlow Condensed", Inter, system-ui, sans-serif;
+  }
+  .broadcast-safe {
+    padding: var(--broadcast-safe-margin);
+  }
+  .tabular-score {
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+  }
+}
+
+/* Custom scrollbars (flat, no glow) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--app-background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-muted);
+}
+
+/* Remove glass/glow helpers for operator UI (flat panels only) */
+.glass-panel {
+  background: var(--app-surface);
+  backdrop-filter: none;
+  border: 1px solid var(--app-border);
+  box-shadow: none;
+}
+.broadcast-scorebug {
+  background: linear-gradient(135deg, rgba(10, 15, 29, 0.95), rgba(15, 23, 42, 0.95));
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.8);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  /* keep hover affordances on pointer devices without affecting touch */
+}
+
+@media (hover: none) {
+  /* Avoid sticky hover states on touch devices. Use semantic hover utilities in components. */
+}
+
+@layer utilities {
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
