@@ -1,0 +1,52 @@
+# Dependencies / build
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# Environment files (keep examples)
+.env
+.env.*
+*.env
+!.env.example
+!**/.env.example
+
+# Logs / runtime
+*.log
+logs/
+*.pid
+*.seed
+pgdata/
+pg.log
+.local/
+
+# Backups / uploads / local data
+server/backups/
+backups/
+uploads/*
+!uploads/.gitkeep
+
+# Test / coverage artifacts
+test-results/
+playwright-report/
+blob-report/
+coverage/
+server/coverage/
+client/test-results/
+client/playwright-report/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# Scratch
+_archive/
+h2_match_id.txt
+tmp/
+temp/

@@ -1,0 +1,35 @@
+{
+  "name": "qwesie-tv",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Professional Volleyball Live-Scoring, Television Broadcast Graphics and Match Statistics Platform",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<owner>/<repo>.git"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"server,client\" -c \"cyan,magenta\" \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=shared && npm run build --workspace=server && npm run build --workspace=client",
+    "start": "npm run start --workspace=server",
+    "prisma:generate": "npm run prisma:generate --workspace=server",
+    "prisma:migrate": "npm run prisma:migrate --workspace=server",
+    "prisma:seed": "npm run prisma:seed --workspace=server",
+    "db:init": "powershell -ExecutionPolicy Bypass -File ./scripts/db-init.ps1",
+    "db:start": "powershell -ExecutionPolicy Bypass -File ./scripts/db-start.ps1",
+    "db:stop": "powershell -ExecutionPolicy Bypass -File ./scripts/db-stop.ps1",
+    "typecheck": "npm run typecheck --workspace=shared && npm run typecheck --workspace=server && npm run typecheck --workspace=client",
+    "test": "npm run test --workspace=server",
+    "test:e2e": "npm run test:e2e --workspace=client",
+    "verify": "npm run build && npm run test --workspace=server && npm run test:e2e --workspace=client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: qwesie_tv
+    ports:
+      - "5432:5432"
+    volumes:
+      - qwesie_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qwesie_tv"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/qwesie_tv?schema=public
+      CORS_ORIGIN: "*"
+      JWT_SECRET: change-me-in-production-please-use-a-strong-secret
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+volumes:
+  qwesie_pgdata:
