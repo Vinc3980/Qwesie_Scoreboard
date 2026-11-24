@@ -1,0 +1,634 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum MatchStatus {
+  SCHEDULED
+  READY
+  LIVE
+  PAUSED
+  BETWEEN_SETS
+  SUSPENDED
+  COMPLETED
+  CANCELLED
+}
+
+enum TeamSide {
+  HOME
+  AWAY
+}
+
+enum MatchEventType {
+  POINT_AWARDED
+  POINT_CORRECTED
+  POINT_REVERSED
+  ACTION_RECORDED
+  TIMEOUT_CALLED
+  SUBSTITUTION_RECORDED
+  SET_STARTED
+  SET_COMPLETED
+  MATCH_STARTED
+  MATCH_COMPLETED
+  MATCH_STATUS_CHANGED
+  SERVING_TEAM_CHANGED
+  ROTATION_ADVANCED
+  CORRECTION
+  REVERSAL
+  UNDO
+  NOTE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  CORRECT
+  REVERSE
+  STATUS_CHANGE
+}
+
+enum BroadcastGraphicType {
+  SCOREBUG
+  LOWER_THIRD
+  STATS
+  SPONSOR
+  CUSTOM
+  SCENE
+}
+
+enum BroadcastScene {
+  PLAY
+  SET_BREAK
+  TIMEOUT
+  MATCH_STATS
+  LINEUPS
+  HEAD_TO_HEAD
+  PLAYER_SPOTLIGHT
+  MATCH_MOMENTUM
+  FINAL
+  BREAK_SLATE
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  username           String    @unique
+  passwordHash       String    @map("password_hash")
+  displayName        String    @map("display_name")
+  isActive           Boolean   @default(true) @map("is_active")
+  roleId             String?   @map("role_id")
+  role               Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  failedAttempts     Int       @default(0) @map("failed_attempts")
+  lockedUntil        DateTime? @map("locked_until")
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  tokenVersion       Int       @default(0) @map("token_version")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  operatedEvents  MatchEvent[]       @relation("EventOperator")
+  auditLogs       AuditLog[]
+  correctedEvents MatchEvent[]       @relation("EventCorrectedBy")
+  recoveryCodes   UserRecoveryCode[]
+  resetTokens     PasswordResetToken[]
+
+  @@index([roleId])
+  @@map("users")
+}
+
+model UserRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @map("code_hash")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, usedAt])
+  @@map("user_recovery_codes")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  permissions Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("roles")
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  name           String
+  shortName      String   @map("short_name") // 3-4 chars for broadcast
+  code           String?  @unique
+  city           String?
+  country        String?
+  logoUrl        String?  @map("logo_url")
+  primaryColor   String?  @map("primary_color")
+  secondaryColor String?  @map("secondary_color")
+  textColor      String?  @map("text_color")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  players         Player[]
+  homeMatches     Match[]                @relation("HomeTeam")
+  awayMatches     Match[]                @relation("AwayTeam")
+  rosters         MatchRoster[]
+  lineups         StartingLineup[]
+  teamStatistics  TeamMatchStatistics[]
+
+  @@index([name])
+  @@map("teams")
+}
+
+model Player {
+  id           String    @id @default(cuid())
+  teamId       String?   @map("team_id")
+  team         Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  displayName  String?   @map("display_name")
+  dateOfBirth  DateTime? @map("date_of_birth")
+  jerseyNumber Int?      @map("jersey_number")
+  photoUrl     String?   @map("photo_url")
+  position     String?   // OH/MB/S/OPP/L/DS
+  isCaptain    Boolean   @default(false) @map("is_captain")
+  isLibero     Boolean   @default(false) @map("is_libero")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  rosterEntries    MatchRoster[]
+  lineupPositions  StartingLineup[]
+  playerStatistics PlayerMatchStatistics[]
+  substitutionsIn  Substitution[]          @relation("PlayerIn")
+  substitutionsOut Substitution[]          @relation("PlayerOut")
+
+  @@index([teamId])
+  @@index([lastName, firstName])
+  @@map("players")
+}
+
+model Competition {
+  id               String   @id @default(cuid())
+  name             String
+  season           String?
+  organizer        String?
+  description      String?
+  scorebugThemeId  String?  @map("scorebug_theme_id")
+  scorebugTheme    ScorebugTheme? @relation("CompetitionScorebugTheme", fields: [scorebugThemeId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  tournaments      Tournament[]
+  matches          Match[]
+  scorebugThemes   ScorebugTheme[] @relation("CompetitionScorebugThemes")
+
+  @@index([name])
+  @@index([scorebugThemeId])
+  @@map("competitions")
+}
+
+model Tournament {
+  id            String       @id @default(cuid())
+  competitionId String?      @map("competition_id")
+  competition   Competition? @relation(fields: [competitionId], references: [id], onDelete: SetNull)
+  name          String
+  location      String?
+  startDate     DateTime?    @map("start_date")
+  endDate       DateTime?    @map("end_date")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  matches Match[]
+
+  @@index([competitionId])
+  @@index([name])
+  @@map("tournaments")
+}
+
+model Venue {
+  id        String   @id @default(cuid())
+  name      String
+  city      String?
+  country   String?
+  address   String?
+  capacity  Int?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  matches Match[]
+
+  @@index([name])
+  @@map("venues")
+}
+
+model Match {
+  id              String      @id @default(cuid())
+  externalCode    String?     @unique @map("external_code")
+  competitionId   String?     @map("competition_id")
+  competition     Competition? @relation(fields: [competitionId], references: [id], onDelete: SetNull)
+  tournamentId    String?     @map("tournament_id")
+  tournament      Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  venueId         String?     @map("venue_id")
+  venue           Venue?      @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  homeTeamId      String?     @map("home_team_id")
+  homeTeam        Team?       @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: SetNull)
+  awayTeamId      String?     @map("away_team_id")
+  awayTeam        Team?       @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: SetNull)
+
+  // Legacy/display fields for compatibility with existing UI flows
+  homeTeamName    String      @default("HOME TEAM") @map("home_team_name")
+  awayTeamName    String      @default("AWAY TEAM") @map("away_team_name")
+  tournamentName  String?     @map("tournament_name")
+  division        String?     
+  court           String?
+  venueType       String?     @map("venue_type")
+  ruleset         String?     @map("ruleset")
+  matchNumber     String?     @map("match_number")
+  scheduledAt     DateTime?   @map("scheduled_at")
+
+  status          MatchStatus @default(SCHEDULED)
+  currentSetNumber Int        @default(1) @map("current_set_number")
+  setsWonHome     Int         @default(0) @map("sets_won_home")
+  setsWonAway     Int         @default(0) @map("sets_won_away")
+  servingSide     TeamSide?   @map("serving_side")
+  winnerSide      TeamSide?   @map("winner_side")
+  revision        Int         @default(0)
+
+  // Configurable volleyball rules (defaults aligned to official/common rules)
+  bestOfSets          Int     @default(5) @map("best_of_sets")
+  setsToWin           Int     @default(3) @map("sets_to_win")
+  regularSetPoints    Int     @default(25) @map("regular_set_points")
+  finalSetPoints      Int     @default(15) @map("final_set_points")
+  minPointDifference  Int     @default(2) @map("min_point_difference")
+  rallyScoring        Boolean @default(true) @map("rally_scoring")
+  timeoutsPerSet      Int     @default(2) @map("timeouts_per_set")
+  substitutionsPerSet Int     @default(6) @map("substitutions_per_set")
+  confirmSetEnd       Boolean @default(true) @map("confirm_set_end")
+
+  startedAt DateTime? @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  sets               MatchSet[]
+  events             MatchEvent[]
+  rosters            MatchRoster[]
+  lineups            StartingLineup[]
+  playerStatistics   PlayerMatchStatistics[]
+  teamStatistics     TeamMatchStatistics[]
+  timeouts           Timeout[]
+  substitutions      Substitution[]
+  officials          MatchOfficial[]
+  broadcastConfigs   BroadcastConfiguration[]
+  broadcastStates    BroadcastGraphicState[]
+  auditLogs          AuditLog[]
+  onAirCourts        CourtOnAir[]
+  scorebugThemeId    String?  @map("scorebug_theme_id")
+  scorebugTheme      ScorebugTheme? @relation("MatchScorebugTheme", fields: [scorebugThemeId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([competitionId])
+  @@index([tournamentId])
+  @@index([venueId])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@index([scheduledAt])
+  @@index([scorebugThemeId])
+  @@map("matches")
+}
+
+model MatchRoster {
+  id           String   @id @default(cuid())
+  matchId      String   @map("match_id")
+  match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  teamId       String?  @map("team_id")
+  team         Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  playerId     String   @map("player_id")
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  side         TeamSide
+  jerseyNumber Int      @map("jersey_number")
+  isCaptain    Boolean  @default(false) @map("is_captain")
+  isLibero     Boolean  @default(false) @map("is_libero")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, side, jerseyNumber], map: "match_roster_side_jersey_unique")
+  @@unique([matchId, playerId], map: "match_roster_player_unique")
+  @@index([matchId, side])
+  @@index([playerId])
+  @@map("match_rosters")
+}
+
+model StartingLineup {
+  id           String   @id @default(cuid())
+  matchId      String   @map("match_id")
+  match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setNumber    Int      @map("set_number")
+  teamId       String?  @map("team_id")
+  team         Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  side         TeamSide
+  playerId     String   @map("player_id")
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  rotationPos  Int      @map("rotation_pos") // 1-6
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, setNumber, side, rotationPos], map: "starting_lineup_rotation_unique")
+  @@unique([matchId, setNumber, side, playerId], map: "starting_lineup_player_unique")
+  @@index([matchId, setNumber, side])
+  @@map("starting_lineups")
+}
+
+model MatchSet {
+  id            String    @id @default(cuid())
+  matchId       String    @map("match_id")
+  match         Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setNumber     Int       @map("set_number")
+  homePoints    Int       @default(0) @map("home_points")
+  awayPoints    Int       @default(0) @map("away_points")
+  targetPoints  Int       @map("target_points")
+  minDifference Int       @default(2) @map("min_difference")
+  winnerSide    TeamSide? @map("winner_side")
+  servingSide   TeamSide? @map("serving_side")
+  status        MatchStatus @default(READY)
+  pendingEnd    Boolean   @default(false) @map("pending_end")
+  startedAt     DateTime? @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  events        MatchEvent[]
+  timeouts      Timeout[]
+  substitutions Substitution[]
+
+  @@unique([matchId, setNumber], map: "match_set_unique")
+  @@index([matchId, status])
+  @@map("match_sets")
+}
+
+model MatchEvent {
+  id              String         @id @default(cuid())
+  matchId         String         @map("match_id")
+  match           Match          @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setId           String?        @map("set_id")
+  set             MatchSet?      @relation(fields: [setId], references: [id], onDelete: SetNull)
+  sequenceNumber  Int            @map("sequence_number")
+  type            MatchEventType
+  teamSide        TeamSide?      @map("team_side")
+  actorUserId     String?        @map("actor_user_id")
+  actorUser       User?          @relation("EventOperator", fields: [actorUserId], references: [id], onDelete: SetNull)
+  payload         Json?
+  isCorrection    Boolean        @default(false) @map("is_correction")
+  isReversal      Boolean        @default(false) @map("is_reversal")
+  correctsEventId String?        @map("corrects_event_id")
+  correctsEvent   MatchEvent?    @relation("EventCorrection", fields: [correctsEventId], references: [id], onDelete: SetNull)
+  corrections     MatchEvent[]   @relation("EventCorrection")
+  correctedById   String?        @map("corrected_by_id")
+  correctedBy     User?          @relation("EventCorrectedBy", fields: [correctedById], references: [id], onDelete: SetNull)
+  note            String?
+  clientEventId   String?        @map("client_event_id")
+  eventTimestamp  DateTime       @default(now()) @map("event_timestamp")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  auditLogs       AuditLog[]
+
+  @@unique([matchId, sequenceNumber], map: "match_event_sequence_unique")
+  @@unique([matchId, clientEventId], map: "match_event_client_id_unique")
+  @@index([matchId, eventTimestamp])
+  @@index([matchId, type])
+  @@index([setId])
+  @@index([correctsEventId])
+  @@map("match_events")
+}
+
+model PlayerMatchStatistics {
+  id           String   @id @default(cuid())
+  matchId      String   @map("match_id")
+  match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  playerId     String   @map("player_id")
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  teamId       String?  @map("team_id")
+  side         TeamSide
+  kills        Int      @default(0)
+  errors       Int      @default(0)
+  aces         Int      @default(0)
+  blocks       Int      @default(0)
+  digs         Int      @default(0)
+  assists      Int      @default(0)
+  points       Int      @default(0)
+  receptions   Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, playerId], map: "player_match_stats_unique")
+  @@index([matchId, side])
+  @@map("player_match_statistics")
+}
+
+model TeamMatchStatistics {
+  id                 String   @id @default(cuid())
+  matchId            String   @map("match_id")
+  match              Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  teamId             String?  @map("team_id")
+  team               Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  side               TeamSide
+  points             Int      @default(0)
+  kills              Int      @default(0)
+  errors             Int      @default(0)
+  aces               Int      @default(0)
+  blocks             Int      @default(0)
+  digs               Int      @default(0)
+  assists            Int      @default(0)
+  timeoutsUsed       Int      @default(0) @map("timeouts_used")
+  substitutionsUsed  Int      @default(0) @map("substitutions_used")
+  sideoutAttempts    Int      @default(0) @map("sideout_attempts")
+  sideoutWins        Int      @default(0) @map("sideout_wins")
+  rotations          Int      @default(0)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, side], map: "team_match_stats_unique")
+  @@index([teamId])
+  @@map("team_match_statistics")
+}
+
+model Timeout {
+  id             String   @id @default(cuid())
+  matchId        String   @map("match_id")
+  match          Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setId          String?  @map("set_id")
+  set            MatchSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
+  side           TeamSide
+  setNumber      Int      @map("set_number")
+  timeoutNumber  Int      @map("timeout_number")
+  eventId        String?  @unique @map("event_id")
+  calledAt       DateTime @default(now()) @map("called_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, setNumber, side, timeoutNumber], map: "timeout_unique")
+  @@index([matchId, setNumber, side])
+  @@map("timeouts")
+}
+
+model Substitution {
+  id               String   @id @default(cuid())
+  matchId          String   @map("match_id")
+  match            Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setId            String?  @map("set_id")
+  set              MatchSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
+  side             TeamSide
+  setNumber        Int      @map("set_number")
+  substitutionNo   Int      @map("substitution_no")
+  playerOutId      String?  @map("player_out_id")
+  playerOut        Player?  @relation("PlayerOut", fields: [playerOutId], references: [id], onDelete: SetNull)
+  playerInId       String?  @map("player_in_id")
+  playerIn         Player?  @relation("PlayerIn", fields: [playerInId], references: [id], onDelete: SetNull)
+  playerOutJersey  Int?     @map("player_out_jersey")
+  playerInJersey   Int?     @map("player_in_jersey")
+  eventId          String?  @unique @map("event_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([matchId, setNumber, side, substitutionNo], map: "substitution_unique")
+  @@index([matchId, setNumber, side])
+  @@map("substitutions")
+}
+
+model MatchOfficial {
+  id        String   @id @default(cuid())
+  matchId   String   @map("match_id")
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  role      String
+  fullName  String   @map("full_name")
+  federation String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([matchId])
+  @@map("match_officials")
+}
+
+model BroadcastConfiguration {
+  id          String   @id @default(cuid())
+  matchId     String?  @map("match_id")
+  match       Match?   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  name        String
+  theme       String?
+  settings    Json?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  states      BroadcastGraphicState[]
+
+  @@index([matchId, isActive])
+  @@map("broadcast_configurations")
+}
+
+model BroadcastGraphicState {
+  id                String                  @id @default(cuid())
+  matchId           String                  @map("match_id")
+  match             Match                   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  configurationId   String?                 @map("configuration_id")
+  configuration     BroadcastConfiguration? @relation(fields: [configurationId], references: [id], onDelete: SetNull)
+  graphicType       BroadcastGraphicType    @map("graphic_type")
+  scene             BroadcastScene?         @map("scene")
+  isVisible         Boolean                 @default(false) @map("is_visible")
+  scorebugVisible   Boolean                 @default(true) @map("scorebug_visible")
+  scorebugVariant   String?                 @map("scorebug_variant")
+  scorebugPosition  String?                 @map("scorebug_position")
+  scorebugScale     Float?                  @map("scorebug_scale")
+  lockScene         Boolean                 @default(false) @map("lock_scene")
+  timerEndsAt       DateTime?               @map("timer_ends_at")
+  payload           Json?
+  version           Int                     @default(1)
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  @@unique([matchId, graphicType], map: "broadcast_graphic_unique")
+  @@index([matchId, isVisible])
+  @@map("broadcast_graphic_states")
+}
+
+model ScorebugTheme {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  config         Json
+  isDefault      Boolean  @default(false) @map("is_default")
+  competitionId  String?  @map("competition_id")
+  competition    Competition? @relation("CompetitionScorebugThemes", fields: [competitionId], references: [id], onDelete: SetNull)
+  isBuiltIn      Boolean  @default(false) @map("is_built_in")
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  defaultForCompetitions Competition[] @relation("CompetitionScorebugTheme")
+  matchOverrides         Match[]       @relation("MatchScorebugTheme")
+
+  @@index([competitionId])
+  @@index([isDefault])
+  @@index([isBuiltIn])
+  @@map("scorebug_themes")
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  matchId     String?     @map("match_id")
+  match       Match?      @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  eventId     String?     @map("event_id")
+  event       MatchEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  actorUserId String?     @map("actor_user_id")
+  actorUser   User?       @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      AuditAction
+  entityType  String      @map("entity_type")
+  entityId    String?     @map("entity_id")
+  before      Json?
+  after       Json?
+  metadata    Json?
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([matchId, createdAt])
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
+
+model CourtOnAir {
+  id         String   @id @default(cuid())
+  courtKey   String   @unique @map("court_key")
+  courtLabel String   @map("court_label")
+  matchId    String?  @map("match_id")
+  match      Match?   @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([matchId])
+  @@map("court_on_air")
+}
