@@ -5,6 +5,8 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 ENV CI=true
+# Prisma engines need OpenSSL on Alpine.
+RUN apk add --no-cache openssl
 
 FROM base AS deps
 COPY package.json package-lock.json ./
@@ -21,6 +23,7 @@ RUN npm run prisma:generate && npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache openssl
 # Copy manifests and install production deps (prisma CLI included for migrate deploy)
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/package.json
