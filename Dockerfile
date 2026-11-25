@@ -20,18 +20,19 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-# Copy manifests and install production deps
+# Copy manifests and install production deps (include prisma CLI for migrate deploy)
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/package.json
 COPY server/package.json ./server/package.json
 COPY client/package.json ./client/package.json
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npm install -w server prisma@6.3.1 --no-save && npm cache clean --force
 # Copy built artifacts
 COPY --from=build /app/shared/dist ./shared/dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/prisma ./server/prisma
 COPY --from=build /app/client/dist ./client/dist
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 
 EXPOSE 5000
-# Run migrations separately in deployment (e.g. prisma migrate deploy) before/at startup as appropriate
-CMD ["node", "server/dist/index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=server/prisma/schema.prisma && node server/dist/index.js"]
