@@ -8,18 +8,31 @@ function pickLan(lanIpv4: string[], preferred?: string | null) {
   return lanIpv4[0] || null;
 }
 function isLocalHostLike(host: string) { return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'; }
+function isPrivateLanHost(host: string) {
+  if (!host) return false;
+  if (isLocalHostLike(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+  return false;
+}
 function computeOutputBaseUrl(params: { currentHost: string; currentPort?: string | number | null; protocol?: string; serverPort?: number; lanIpv4?: string[]; preferredLan?: string | null; forceLan?: boolean; devServerPort?: number; }) {
   const lan = pickLan(params.lanIpv4 || [], params.preferredLan ?? null);
   const currentHost = params.currentHost || 'localhost';
   const proto = params.protocol || 'http:';
   const currentPort = params.currentPort != null && params.currentPort !== '' ? String(params.currentPort) : '';
-  const serverPort = params.serverPort || 5000;
-  const devPort = params.devServerPort || 5173;
-  const forceLan = params.forceLan ?? isLocalHostLike(currentHost);
+  const devPort = String(params.devServerPort || 5173);
+  const isDevPort = currentPort === devPort || currentPort === '5173';
+  const serverPortNum = Number(params.serverPort || 0) || undefined;
+  const isLocal = isLocalHostLike(currentHost);
+  const isPublicHost = !isPrivateLanHost(currentHost);
+  const forceLan = params.forceLan ?? (isDevPort || isLocal);
   let host = currentHost;
-  if (forceLan && lan) host = lan;
-  let effectivePort = currentPort ? Number(currentPort) : (isLocalHostLike(currentHost) && lan ? devPort : serverPort);
-  if (!currentPort && lan && host === lan && devPort) effectivePort = devPort;
+  if (lan && !isPublicHost && (forceLan || isLocal)) host = lan;
+  let effectivePort = '';
+  if (isDevPort) effectivePort = devPort;
+  else if (currentPort) effectivePort = currentPort;
+  else if (serverPortNum && !isPublicHost && proto === 'http:') effectivePort = String(serverPortNum);
   return { baseUrl: `${proto}//${host}${effectivePort ? `:${effectivePort}` : ''}`, selectedLan: lan };
 }
 function buildCourtOutputUrl(baseUrl: string, court: string, kind: string) { return `${baseUrl}/out/court/${encodeURIComponent(String(court||'1'))}/${kind}`; }
@@ -31,14 +44,33 @@ describe('Stage C URL builder', () => {
     const r2 = computeOutputBaseUrl({ currentHost: '127.0.0.1', currentPort: '5173', lanIpv4: ['10.0.0.5'], serverPort: 5000, devServerPort: 5173 });
     expect(r2.baseUrl).toBe('http://10.0.0.5:5173');
   });
-  it('keeps non-local host unless forceLan', () => {
-    const r = computeOutputBaseUrl({ currentHost: '192.168.1.20', currentPort: '5173', lanIpv4: ['192.168.1.50'], serverPort: 5000, devServerPort: 5173 });
+  it('keeps the current LAN host when forceLan is disabled', () => {
+    const r = computeOutputBaseUrl({ currentHost: '192.168.1.20', currentPort: '5173', lanIpv4: ['192.168.1.50'], serverPort: 5000, devServerPort: 5173, forceLan: false });
     expect(r.baseUrl).toBe('http://192.168.1.20:5173');
   });
   it('respects remembered/preferred interface selection', () => {
     const r = computeOutputBaseUrl({ currentHost: 'localhost', currentPort: '5173', lanIpv4: ['10.0.0.2','10.0.0.9'], preferredLan: '10.0.0.9', devServerPort: 5173 });
     expect(r.baseUrl).toBe('http://10.0.0.9:5173');
     expect(r.selectedLan).toBe('10.0.0.9');
+  });
+  it('never swaps to the container LAN IP or internal port on a public host', () => {
+    const r = computeOutputBaseUrl({
+      currentHost: 'qwesie-tv.onrender.com',
+      currentPort: '',
+      protocol: 'https:',
+      serverPort: 10000,
+      lanIpv4: ['10.0.0.5'],
+      forceLan: true,
+    });
+    expect(r.baseUrl).toBe('https://qwesie-tv.onrender.com');
+    expect(r.baseUrl).not.toContain(':10000');
+    expect(r.baseUrl).not.toContain('10.0.0.5');
+  });
+  it('keeps an explicit public port and drops the internal port without one', () => {
+    expect(computeOutputBaseUrl({ currentHost: 'score.example.com', currentPort: '8443', protocol: 'https:', serverPort: 5000, lanIpv4: ['10.0.0.5'], forceLan: true }).baseUrl)
+      .toBe('https://score.example.com:8443');
+    expect(computeOutputBaseUrl({ currentHost: 'score.example.com', currentPort: '', protocol: 'http:', serverPort: 5000, lanIpv4: ['10.0.0.5'], forceLan: true }).baseUrl)
+      .toBe('http://score.example.com');
   });
   it('builds stable per-court output URLs', () => {
     expect(buildCourtOutputUrl('http://192.168.1.50:5173','1','scorebug')).toBe('http://192.168.1.50:5173/out/court/1/scorebug');

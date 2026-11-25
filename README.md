@@ -1,10 +1,22 @@
 # Qwesie TV
 
-[![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/<repo>/actions/workflows/ci.yml)
+[![CI](https://github.com/Vinc3980/Qwesie_Scoreboard/actions/workflows/ci.yml/badge.svg)](https://github.com/Vinc3980/Qwesie_Scoreboard/actions/workflows/ci.yml)
 
 Professional volleyball live-scoring, television broadcast graphics, and match statistics platform.
 
 > License: not yet selected. Add a `LICENSE` file before making the repository public or distributing it.
+
+## Deploy online (free)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Vinc3980/Qwesie_Scoreboard)
+
+Qwesie TV needs a long-running Node + Socket.IO server, so it runs as one Docker
+web service. The free Render plan + a free Neon Postgres costs nothing and supports
+WebSockets and custom domains. Output links automatically use the new public URL.
+
+See [docs/DEPLOY_RENDER_FREE.md](docs/DEPLOY_RENDER_FREE.md) for the full walkthrough
+and free-tier limits. Vercel is not suitable for this app because its Functions are
+request-scoped and cannot host the shared Socket.IO broadcast state.
 
 ## Prerequisites
 

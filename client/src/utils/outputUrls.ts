@@ -20,6 +20,15 @@ export function isLocalHostLike(host: string) {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
 }
 
+export function isPrivateLanHost(host: string) {
+  if (!host) return false;
+  if (isLocalHostLike(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+  return false;
+}
+
 export function computeOutputBaseUrl(params: {
   currentHost: string;
   currentPort?: string | number | null;
@@ -37,20 +46,24 @@ export function computeOutputBaseUrl(params: {
   const devPort = String(params.devServerPort || 5173);
   const isDevPort = currentPort === devPort || currentPort === '5173';
   const serverPortNum = Number(params.serverPort || 0) || undefined;
-  const forceLan = params.forceLan ?? (isDevPort || isLocalHostLike(currentHost));
+  const isLocal = isLocalHostLike(currentHost);
+  // A public deployment (e.g. https://app.onrender.com) has no LAN equivalent:
+  // never swap to the container's private IP or append the internal server port.
+  const isPublicHost = !isPrivateLanHost(currentHost);
+  const forceLan = params.forceLan ?? (isDevPort || isLocal);
 
   // In dev the Vite dev server listens on all interfaces and proxies /api and /socket.io,
   // so OBS-facing URLs must use the LAN IP with the Vite dev port. In production they
   // use the server port (same origin serving the built client). No hard-coded port 5000.
   let host = currentHost;
-  if (lan && (forceLan || isLocalHostLike(currentHost))) host = lan;
+  if (lan && !isPublicHost && (forceLan || isLocal)) host = lan;
 
   let effectivePort = '';
   if (isDevPort) {
     effectivePort = devPort;
   } else if (currentPort) {
     effectivePort = currentPort;
-  } else if (serverPortNum) {
+  } else if (serverPortNum && !isPublicHost && proto === 'http:') {
     effectivePort = String(serverPortNum);
   }
 

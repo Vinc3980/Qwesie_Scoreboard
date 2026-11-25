@@ -1,27 +1,45 @@
+# Qwesie TV - free Render Blueprint
+#
+# Deploy: https://render.com/deploy?repo=https://github.com/Vinc3980/Qwesie_Scoreboard
+#
+# This blueprint uses Render's FREE web service plan (no credit card required).
+# The app is a long-running Express + Socket.IO server, so it runs as one Docker
+# container that also serves the built React client.
+#
+# Database: use a free Neon (https://neon.tech) or Supabase Postgres and paste its
+# connection string into DATABASE_URL when Render prompts for it. Render's own free
+# Postgres works too, but it expires after 30 days.
 services:
   - type: web
     name: qwesie-tv
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/v1/health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
       - key: SERVE_CLIENT
         value: "true"
+      # Render generates and stores a strong secret; the server refuses weak ones.
       - key: JWT_SECRET
         generateValue: true
-      - key: CORS_ORIGIN
-        sync: false
+      # Paste the external Postgres URL here (Neon/Supabase/Render Postgres).
+      # Example: postgresql://user:pass@ep-xxx.aws.neon.tech/qwesie_tv?sslmode=require
       - key: DATABASE_URL
-        fromDatabase:
-          name: qwesie-tv-db
-          property: connectionString
-      - key: APP_BASE_URL
         sync: false
+      # Free instances have no pg_dump binary and no persistent disk.
+      - key: BACKUP_ON_START
+        value: "false"
+      - key: BACKUP_INTERVAL_MINUTES
+        value: "60"
 
-databases:
-  - name: qwesie-tv-db
-    plan: free
-    databaseName: qwesie_tv
-    user: qwesie
+# Optional: Render's free Postgres (expires after 30 days - prefer Neon).
+# Uncomment if you want a one-click database for a short trial, then set
+# DATABASE_URL to the external database before the expiry date.
+#
+# databases:
+#   - name: qwesie-tv-db
+#     plan: free
+#     databaseName: qwesie_tv
+#     user: qwesie

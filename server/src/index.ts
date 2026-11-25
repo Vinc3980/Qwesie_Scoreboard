@@ -17,8 +17,17 @@ import { startBackupScheduler } from './utils/backup.js';
 const app = express();
 const server = http.createServer(app);
 
+// Render/Railway/Fly terminate TLS at their proxy. Trust one hop so req.protocol,
+// req.secure, req.ip and password-reset links use the public HTTPS origin.
+app.set('trust proxy', 1);
+
 const isProd = env.NODE_ENV === 'production';
 const serveClient = env.SERVE_CLIENT ?? isProd;
+
+// Public URL supplied by the hosting platform (Render sets RENDER_EXTERNAL_URL).
+const publicBaseUrl = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_BASE_URL || env.APP_BASE_URL || '')
+  .trim()
+  .replace(/\/$/, '');
 
 function getLanAddresses() {
   const nets = os.networkInterfaces();
@@ -55,6 +64,11 @@ function buildAllowedOriginSet() {
   out.add(`http://127.0.0.1:${devPort}`);
   out.add(`http://localhost:${env.PORT}`);
   out.add(`http://127.0.0.1:${env.PORT}`);
+  // Hosting platforms provide the canonical public URL; allow same-origin
+  // REST/Socket.IO traffic without requiring CORS_ORIGIN to be set manually.
+  if (publicBaseUrl) {
+    try { out.add(new URL(publicBaseUrl).origin); } catch {}
+  }
   return out;
 }
 
@@ -142,7 +156,7 @@ async function printStartupInfo(port: number) {
   const uiPort = serveClient ? port : devPort;
   const lan = lanHosts[0] || 'localhost';
   const court = '1';
-  const base = `http://${lan}:${uiPort}`;
+  const base = publicBaseUrl || `http://${lan}:${uiPort}`;
   const outUrls = {
     scorebug: `${base}/out/court/${encodeURIComponent(court)}/scorebug`,
     graphics: `${base}/out/court/${encodeURIComponent(court)}/graphics`,
