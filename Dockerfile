@@ -13,7 +13,8 @@ COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/package.json
 COPY server/package.json ./server/package.json
 COPY client/package.json ./client/package.json
-RUN npm ci
+# Force dev deps even if the host injects NODE_ENV=production at build time.
+RUN npm ci --include=dev
 
 FROM deps AS build
 COPY . .
