@@ -47,4 +47,4 @@ EXPOSE 5000
 # Render/Fly/Railway inject PORT; the server reads it (default 5000).
 # Retry migrations briefly to tolerate a cold/suspended managed Postgres, then
 # refuse to start if they never succeed (avoids serving against a stale schema).
-CMD ["sh", "-c", "ok=0; for i in 1 2 3 4 5; do if npx prisma migrate deploy --schema=server/prisma/schema.prisma; then ok=1; break; fi; echo \"prisma migrate deploy failed (attempt $i/5), retrying in 5s...\"; sleep 5; done; if [ \"$ok\" != \"1\" ]; then echo 'FATAL: prisma migrate deploy failed after 5 attempts'; exit 1; fi; exec node server/dist/index.js"]
+CMD ["sh", "-c", "if [ -z \"$DATABASE_URL_UNPOOLED\" ]; then export DATABASE_URL_UNPOOLED=\"$DATABASE_URL\"; fi; ok=0; for i in 1 2 3 4 5; do if npx prisma migrate deploy --schema=server/prisma/schema.prisma; then ok=1; break; fi; echo \"prisma migrate deploy failed (attempt $i/5), retrying in 5s...\"; sleep 5; done; if [ \"$ok\" != \"1\" ]; then echo 'FATAL: prisma migrate deploy failed after 5 attempts'; exit 1; fi; exec node server/dist/index.js"]

@@ -30,7 +30,7 @@ services:
       - key: DATABASE_URL
         sync: false
       # Neon: paste the DIRECT (non-pooled) connection string here. Prisma
-      # Migrate uses it on startup. Optional on single-URL hosts; the server
+      # Migrate uses it on startup. Optional on single-URL hosts: the container
       # falls back to DATABASE_URL when this is unset.
       - key: DATABASE_URL_UNPOOLED
         sync: false
