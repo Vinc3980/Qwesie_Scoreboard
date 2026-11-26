@@ -9,6 +9,10 @@ const __dirname = path.dirname(__filename);
 // Load .env from server directory or monorepo root
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
+// Neon writes branch credentials to .env.local (gitignored). Load it last so it
+// overrides local .env values; in production the platform env vars are used.
+dotenv.config({ path: path.resolve(__dirname, '../../../.env.local'), override: true });
+dotenv.config({ path: path.resolve(__dirname, '../../.env.local'), override: true });
 
 const bool = (def: boolean) => z.string().optional().transform(v => v == null || v === '' ? def : v === 'true');
 
@@ -16,6 +20,9 @@ const envSchema = z.object({
   PORT: z.string().default('5000').transform(Number),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5433/qwesie_tv?schema=public'),
+  // Direct (non-pooled) URL used by Prisma Migrate and pg_dump. Optional: falls
+  // back to DATABASE_URL so local Postgres and single-URL hosts keep working.
+  DATABASE_URL_UNPOOLED: z.string().optional().default(''),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   JWT_SECRET: z.string().default('qwesie-tv-development-secret-key-32chars'),
   JWT_COOKIE_NAME: z.string().default('qwesie_token'),
@@ -54,6 +61,13 @@ if (!parsed.success) {
 for (const [k, v] of Object.entries(parsed.data)) {
   if (process.env[k] == null || process.env[k] === '') process.env[k] = String(v);
 }
+
+// Prisma Migrate needs a direct connection. Use the pooled URL when the host
+// does not provide a separate unpooled one (local Postgres, single-URL hosts).
+const resolvedUnpooledUrl =
+  process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || parsed.data.DATABASE_URL;
+process.env.DATABASE_URL_UNPOOLED = resolvedUnpooledUrl;
+parsed.data.DATABASE_URL_UNPOOLED = resolvedUnpooledUrl;
 
 export const env = parsed.data;
 

@@ -18,6 +18,10 @@ RUN npm ci --include=dev
 
 FROM deps AS build
 COPY . .
+# `prisma generate` only needs a syntactically valid URL; no database connection
+# is made during the build. Real values are injected at runtime.
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
+ENV DATABASE_URL_UNPOOLED="postgresql://build:build@localhost:5432/build?schema=public"
 # Generate the Prisma client before compiling the server.
 RUN npm run prisma:generate && npm run build
 
@@ -41,5 +45,6 @@ COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 
 EXPOSE 5000
 # Render/Fly/Railway inject PORT; the server reads it (default 5000).
-# Retry migrations briefly to tolerate a cold/suspended managed Postgres.
-CMD ["sh", "-c", "for i in 1 2 3 4 5; do npx prisma migrate deploy --schema=server/prisma/schema.prisma && break; echo \"prisma migrate deploy failed (attempt $i/5), retrying in 5s...\"; sleep 5; done; exec node server/dist/index.js"]
+# Retry migrations briefly to tolerate a cold/suspended managed Postgres, then
+# refuse to start if they never succeed (avoids serving against a stale schema).
+CMD ["sh", "-c", "ok=0; for i in 1 2 3 4 5; do if npx prisma migrate deploy --schema=server/prisma/schema.prisma; then ok=1; break; fi; echo \"prisma migrate deploy failed (attempt $i/5), retrying in 5s...\"; sleep 5; done; if [ \"$ok\" != \"1\" ]; then echo 'FATAL: prisma migrate deploy failed after 5 attempts'; exit 1; fi; exec node server/dist/index.js"]

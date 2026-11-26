@@ -56,7 +56,8 @@ export async function runBackup(reason = 'manual'): Promise<string | null> {
   try {
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `qwesie-tv-${reason}-${timestamp()}.sql`);
-    const pgUrl = toPgDumpUrl(env.DATABASE_URL);
+    // pg_dump needs a direct (session) connection; pooled/PgBouncer URLs fail.
+    const pgUrl = toPgDumpUrl(env.DATABASE_URL_UNPOOLED || env.DATABASE_URL);
     const { cmd } = resolvePgDumpCommand();
     visibleBackupLog('info', `Starting backup (${reason}) using ${cmd} -> ${file}`);
 

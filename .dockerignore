@@ -8,6 +8,9 @@ pgdata
 *.log
 .env
 **/.env
+.env.*
+**/.env.*
+.neon
 client/dist
 server/dist
 shared/dist

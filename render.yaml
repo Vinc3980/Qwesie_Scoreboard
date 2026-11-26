@@ -25,8 +25,14 @@ services:
       - key: JWT_SECRET
         generateValue: true
       # Paste the external Postgres URL here (Neon/Supabase/Render Postgres).
-      # Example: postgresql://user:pass@ep-xxx.aws.neon.tech/qwesie_tv?sslmode=require
+      # Neon: use the POOLED connection string (host contains "-pooler").
+      # Example: postgresql://user:pass@ep-xxx-pooler.aws.neon.tech/neondb?sslmode=require
       - key: DATABASE_URL
+        sync: false
+      # Neon: paste the DIRECT (non-pooled) connection string here. Prisma
+      # Migrate uses it on startup. Optional on single-URL hosts; the server
+      # falls back to DATABASE_URL when this is unset.
+      - key: DATABASE_URL_UNPOOLED
         sync: false
       # Free instances have no pg_dump binary and no persistent disk.
       - key: BACKUP_ON_START
