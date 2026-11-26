@@ -228,7 +228,7 @@ async function start() {
     try {
       await connectDatabase();
       await ensureDevUser();
-      void import('./utils/setupToken.js').then(m => m.ensureSetupTokenIfNeeded?.()).catch(() => {});
+      void import('./utils/bootstrapStatus.js').then(m => m.getBootstrapStatus()).catch(() => {});
     } catch (dbErr) {
       logger.warn('Database connection warning: PostgreSQL may be unavailable. Server will continue with lazy connection attempts where possible.');
     }

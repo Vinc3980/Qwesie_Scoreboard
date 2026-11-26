@@ -6,13 +6,13 @@ import { z } from 'zod';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from server directory or monorepo root
+// Load .env.local first (Neon writes branch credentials there; gitignored), then
+// .env. Existing process env vars always win, so hosting platforms and explicit
+// overrides take precedence over files.
+dotenv.config({ path: path.resolve(__dirname, '../../../.env.local') });
+dotenv.config({ path: path.resolve(__dirname, '../../.env.local') });
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
-// Neon writes branch credentials to .env.local (gitignored). Load it last so it
-// overrides local .env values; in production the platform env vars are used.
-dotenv.config({ path: path.resolve(__dirname, '../../../.env.local'), override: true });
-dotenv.config({ path: path.resolve(__dirname, '../../.env.local'), override: true });
 
 const bool = (def: boolean) => z.string().optional().transform(v => v == null || v === '' ? def : v === 'true');
 
@@ -39,7 +39,6 @@ const envSchema = z.object({
   // Auth/security
   DEV_AUTO_LOGIN: bool(false),
   ALLOW_SCORER_PIN: bool(false),
-  BOOTSTRAP_SETUP_TOKEN: z.string().optional().default(''),
   // Optional SMTP (email reset layer)
   SMTP_HOST: z.string().optional().default(''),
   SMTP_PORT: z.string().optional().default('587').transform(Number),

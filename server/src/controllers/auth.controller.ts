@@ -11,7 +11,7 @@ import {
   getClientIp, getIpLockInfo, recordIpFailure, clearIpFailures, userLockInfo, smtpEnabled,
   type AppRole,
 } from '../utils/authSecurity.js';
-import { ensureSetupTokenIfNeeded, validateSetupToken } from '../utils/setupToken.js';
+import { getBootstrapStatus } from '../utils/bootstrapStatus.js';
 
 function send(res: Response, data: any, message?: string) {
   res.json({ success: true, data, message, timestamp: new Date().toISOString() });
@@ -96,19 +96,16 @@ function checkForgotRateLimit(key: string, max = 5, windowMs = 15 * 60 * 1000) {
 export class AuthController {
   static async bootstrapStatus(_req: Request, res: Response, next: NextFunction) {
     try {
-      const info = await ensureSetupTokenIfNeeded();
+      const info = await getBootstrapStatus();
       send(res, info);
     } catch (e) { next(e); }
   }
 
   static async bootstrap(req: Request, res: Response, next: NextFunction) {
     try {
-      const info = await ensureSetupTokenIfNeeded();
+      const info = await getBootstrapStatus();
       if (!info.needsBootstrap) return fail(res, 409, 'Admin already exists');
-      const { username, password, displayName, email, setupToken } = req.body as any;
-      if (info.setupTokenRequired && !validateSetupToken(setupToken)) {
-        return fail(res, 403, 'Valid setup token is required for first-run bootstrap');
-      }
+      const { username, password, displayName, email } = req.body as any;
       const uname = normalizeUsername(username);
       const dup = await prisma.user.findFirst({ where: { username: { equals: uname, mode: 'insensitive' } } as any });
       if (dup) return fail(res, 409, 'Unable to create admin account'); // avoid enumeration-ish detail? still fine

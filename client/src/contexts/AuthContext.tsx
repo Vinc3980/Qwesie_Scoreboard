@@ -20,7 +20,7 @@ interface AuthContextValue {
   login: (username: string, password: string, rememberMe?: boolean) => Promise<any>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  bootstrap: (body: { username: string; password: string; displayName: string; email?: string; setupToken?: string }) => Promise<any>;
+  bootstrap: (body: { username: string; password: string; displayName: string; email?: string }) => Promise<any>;
   refresh: () => Promise<void>;
   setUser: (u: AppUser | null) => void;
   canAccess: (section: string) => boolean;
@@ -86,7 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   }, []);
 
-  const bootstrap = useCallback(async (body: { username: string; password: string; displayName: string; email?: string; setupToken?: string }) => {
+  const bootstrap = useCallback(async (body: { username: string; password: string; displayName: string; email?: string }) => {
     const res = await authApi.bootstrap(body);
     if (res?.user) setUserState(toAppUser(res.user));
     setNeedsBootstrap(false);

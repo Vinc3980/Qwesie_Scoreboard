@@ -123,7 +123,6 @@ export const bootstrapSchema = z.object({
   password: z.string().min(1).max(120),
   displayName: z.string().min(1).max(80),
   email: z.string().email().optional(),
-  setupToken: z.string().optional(),
 });
 
 export const createUserSchema = z.object({

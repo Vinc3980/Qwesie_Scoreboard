@@ -33,7 +33,7 @@ const TextInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<H
 TextInput.displayName = 'TextInput';
 
 export const LoginPage: React.FC = () => {
-  const { login, bootstrap, needsBootstrap, bootstrapInfo, loading, user } = useAuth();
+  const { login, bootstrap, needsBootstrap, loading, user } = useAuth();
   const notify = useNotification();
   const navigate = useNavigate();
   const location = useLocation() as any;
@@ -43,7 +43,6 @@ export const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [setupToken, setSetupToken] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
@@ -96,7 +95,6 @@ export const LoginPage: React.FC = () => {
     if (needsBootstrap) {
       if (!displayName.trim()) errs.displayName = 'Display name is required';
       if (password !== confirmPassword) errs.confirmPassword = 'Passwords do not match';
-      if (bootstrapInfo?.setupTokenRequired && !setupToken.trim()) errs.setupToken = 'Setup token is required (shown in server console)';
     }
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
@@ -109,7 +107,7 @@ export const LoginPage: React.FC = () => {
     setBusy(true);
     try {
       if (needsBootstrap) {
-        const res = await bootstrap({ username: username.trim(), password, displayName: displayName.trim() || username.trim(), setupToken: setupToken.trim() || undefined });
+        const res = await bootstrap({ username: username.trim(), password, displayName: displayName.trim() || username.trim() });
         if (res?.recoveryCodes && Array.isArray(res.recoveryCodes)) {
           setRecoveryCodes(res.recoveryCodes);
           return; // show codes once before continuing
@@ -256,14 +254,6 @@ export const LoginPage: React.FC = () => {
                 <TextInput id="confirmPassword" type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} autoComplete="new-password" />
                 {fieldErrors.confirmPassword && <div className="text-xs text-danger mt-1">{fieldErrors.confirmPassword}</div>}
               </div>
-              {bootstrapInfo?.setupTokenRequired && (
-                <div>
-                  <FieldLabel htmlFor="setupToken">Setup token</FieldLabel>
-                  <TextInput id="setupToken" value={setupToken} onChange={e=>setSetupToken(e.target.value)} placeholder="Token from server console" autoComplete="off" />
-                  {fieldErrors.setupToken && <div className="text-xs text-danger mt-1">{fieldErrors.setupToken}</div>}
-                  <div className="text-[11px] text-fg-subtle mt-1">Required for protected first-run setup. Check the server console output.</div>
-                </div>
-              )}
             </>
           )}
 

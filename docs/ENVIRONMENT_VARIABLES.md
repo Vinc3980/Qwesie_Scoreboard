@@ -16,7 +16,6 @@ Single reference table for server/runtime configuration. Defaults shown are thos
 | `JWT_COOKIE_NAME` | `qwesie_token` | No | Auth cookie name. |
 | `DEV_AUTO_LOGIN` | `false` | No | Development convenience only. When `true` and not production, injects a real non-VIEWER dev scorer user/session context; ignored/disabled in production. |
 | `ALLOW_SCORER_PIN` | `false` | No | Enables scorer PIN-related behavior where supported by auth flows. |
-| `BOOTSTRAP_SETUP_TOKEN` | *(empty)* | No | Optional one-time/setup token path for protected first-run admin bootstrap (see auth/bootstrap flow). |
 | `SMTP_HOST` | *(empty)* | No | SMTP host for optional password reset email layer. SMTP is considered enabled only when host/user/from are set. |
 | `SMTP_PORT` | `587` | No | SMTP port. |
 | `SMTP_USER` | *(empty)* | No | SMTP username. |

@@ -12,7 +12,7 @@ Administrative setup, security, configuration, backups, and operational maintena
 
 ## Authentication and security
 - **Production safety:** set a strong `JWT_SECRET` (>=32 chars, non-default). Server refuses weak/default secrets in production.
-- **First-run bootstrap:** initial admin/setup is protected by the bootstrap flow (and optional setup token configuration, if used). Complete bootstrap before normal operation.
+- **First-run bootstrap:** the first visitor creates the admin account (no setup token). Do this immediately after deploying, before sharing the URL.
 - **Password policy and lockout:** server-side password policy and brute-force lockout controls (per user/IP) are enforced with generic error responses.
 - **Sessions/tokens:** JWTs include token versioning; sensitive changes (e.g. password/reset/logout-all flows) invalidate prior sessions as designed.
 - **User management:** admin can manage users/roles and recovery actions via UI/API/CLI as provided.

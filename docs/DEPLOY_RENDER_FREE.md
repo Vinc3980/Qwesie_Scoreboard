@@ -88,11 +88,11 @@ only newly added migrations.
 ## 4. Create the first admin
 
 On a fresh database the app shows the bootstrap/setup screen. Create the admin
-account there, then sign in. Create SCORER and VIEWER accounts from the users page.
+account there (no setup token is required), then sign in. Create SCORER and
+VIEWER accounts from the users page.
 
-If the setup token is required, it is printed in the Render logs on first boot
-(look for `BOOTSTRAP_SETUP_TOKEN` / setup-token output), or set
-`BOOTSTRAP_SETUP_TOKEN` yourself in Render -> Environment.
+> Create the admin immediately after the first deploy. Until an admin exists,
+> anyone who opens the URL can claim it.
 
 ## 5. Output links (OBS)
 

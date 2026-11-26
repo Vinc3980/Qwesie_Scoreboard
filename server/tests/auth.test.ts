@@ -41,7 +41,6 @@ const baseEnv = {
   PG_DUMP_PATH: 'pg_dump',
   DEV_AUTO_LOGIN: false,
   ALLOW_SCORER_PIN: false,
-  BOOTSTRAP_SETUP_TOKEN: '',
   SMTP_HOST: '',
   SMTP_PORT: 587,
   SMTP_USER: '',
@@ -88,7 +87,7 @@ async function loadAuth(overrides: { env?: any; prisma?: any } = {}) {
   vi.doMock('../src/config/database.js', () => ({ prisma }));
   vi.doMock('../src/config/env.js', () => ({ env }));
   vi.doMock('../src/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-  vi.doMock('../src/utils/setupToken.js', () => ({ ensureSetupTokenIfNeeded: vi.fn(async () => ({ needsBootstrap: false, setupTokenRequired: false })), validateSetupToken: vi.fn(() => false) }));
+  vi.doMock('../src/utils/bootstrapStatus.js', () => ({ getBootstrapStatus: vi.fn(async () => ({ needsBootstrap: false, setupTokenRequired: false })) }));
 
   const security = await import('../src/utils/authSecurity.js');
   const { AuthController } = await import('../src/controllers/auth.controller.js');
