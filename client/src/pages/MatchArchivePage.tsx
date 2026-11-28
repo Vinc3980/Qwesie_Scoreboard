@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
 import { Archive, Search, Filter, FileText, Calendar, Trophy, Building2 } from 'lucide-react';
 import { matchApi } from '../services/api.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
@@ -9,7 +10,8 @@ import { Badge } from '../components/ui/Badge.js';
 import { Input, Label, Select } from '../components/ui/Input.js';
 
 export const MatchArchivePage: React.FC = () => {
-  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: 15000 });
+  const poll = usePollingFallback(30_000);
+  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: poll, staleTime: 30_000 });
   const [search, setSearch] = useState('');
   const [team, setTeam] = useState('');
   const [tournament, setTournament] = useState('');
@@ -17,6 +19,7 @@ export const MatchArchivePage: React.FC = () => {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(60);
 
   const completed = useMemo(() => matches.filter(m => m.status === 'FINISHED'), [matches]);
 
@@ -121,14 +124,15 @@ export const MatchArchivePage: React.FC = () => {
           <div className="space-y-2 max-h-[70vh] overflow-auto pr-1">
             {isLoading && <div className="space-y-2 animate-pulse">{[0,1,2,3].map(i => <div key={i} className="h-20 rounded-[14px] border border-border bg-surface-sunken" />)}</div>}
             {!isLoading && filtered.length === 0 && <div className="text-sm text-fg-subtle py-10 text-center border border-dashed border-border rounded-[14px]"><div className="font-semibold text-fg mb-1">No completed matches</div><div>Adjust filters or complete a match to see it here.</div></div>}
-            {filtered.map(m => (
-              <button key={m.id} onClick={() => setSelectedId(m.id)} className={`w-full text-left rounded-xl border p-3 transition ${selectedId===m.id ? 'border-info/40 bg-info/10' : 'border-border bg-surface-subtle/30 hover:bg-surface/[0.03]'}`}>
+            {filtered.slice(0, visibleCount).map(m => (
+              <button key={m.id} onClick={() => setSelectedId(m.id)} style={{ contentVisibility: 'auto', containIntrinsicSize: '88px' }} className={`w-full text-left rounded-xl border p-3 transition ${selectedId===m.id ? 'border-info/40 bg-info/10' : 'border-border bg-surface-subtle/30 hover:bg-surface/[0.03]'}`}>
                 <div className="flex items-center gap-2 mb-1"><Badge variant="finished">Completed</Badge><span className="text-xs text-fg-subtle">#{m.match_no} • {m.match_date}</span></div>
                 <div className="font-bold text-fg">{m.teams.A.name} vs {m.teams.B.name}</div>
                 <div className="text-xs text-fg-muted mt-0.5">Final {m.teams.A.sets}-{m.teams.B.sets} • Winner: {m.winner ? m.teams[m.winner].name : '—'}</div>
                 <div className="text-xs text-fg-subtle mt-1 flex items-center gap-2 flex-wrap"><span className="inline-flex items-center gap-1"><Trophy className="w-3 h-3" />{m.tournament}</span>{(m as any).competition ? <span className="inline-flex items-center gap-1"><Building2 className="w-3 h-3" />{(m as any).competition}</span> : null}</div>
               </button>
             ))}
+            {filtered.length > visibleCount && <div className="pt-2 flex justify-center"><Button variant="outline" size="sm" onClick={() => setVisibleCount(c => c + 60)}>Show more ({filtered.length - visibleCount} remaining)</Button></div>}
           </div>
         </Card>
 

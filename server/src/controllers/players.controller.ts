@@ -1,47 +1,91 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/database.js';
+import { deleteStoredKeys, shapePlayerMedia, shapeTeamMedia } from '../utils/media.js';
 
 const ok = (res: Response, data: any, message?: string) => res.json({ success: true, data, message, timestamp: new Date().toISOString() });
+
+const PLAYER_FIELDS = [
+  'teamId', 'firstName', 'lastName', 'displayName', 'jerseyNumber', 'heightCm',
+  'photoUrl', 'photoKey', 'thumbKey', 'position', 'isCaptain', 'isLibero',
+] as const;
+
+function pickPlayerData(body: any) {
+  const b = body || {};
+  const data: any = {};
+  for (const k of PLAYER_FIELDS) if (b[k] !== undefined) data[k] = b[k] === '' ? null : b[k];
+  if (data.jerseyNumber !== undefined && data.jerseyNumber !== null) data.jerseyNumber = Number(data.jerseyNumber);
+  if (data.heightCm !== undefined && data.heightCm !== null) {
+    const n = Number(data.heightCm);
+    data.heightCm = Number.isFinite(n) ? Math.max(0, Math.min(300, Math.round(n))) : null;
+  }
+  if (typeof data.firstName === 'string') data.firstName = data.firstName.trim();
+  if (typeof data.lastName === 'string') data.lastName = data.lastName.trim();
+  if (typeof data.displayName === 'string') data.displayName = data.displayName.trim();
+  return data;
+}
+
+function shapePlayer(player: any) {
+  const p = shapePlayerMedia(player);
+  if (p && p.team) p.team = shapeTeamMedia(p.team);
+  return p;
+}
 
 export class PlayersController {
   static async list(req: Request, res: Response, next: NextFunction) {
     try {
       const teamId = typeof req.query.teamId === 'string' ? req.query.teamId : undefined;
-      ok(res, await prisma.player.findMany({ where: teamId ? { teamId } : undefined, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }], include: { team: true } }));
+      const players = await prisma.player.findMany({
+        where: teamId ? { teamId } : undefined,
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+        include: { team: true },
+      });
+      ok(res, players.map(shapePlayer));
     } catch (e) { next(e); }
   }
+
   static async get(req: Request, res: Response, next: NextFunction) {
-    try { ok(res, await prisma.player.findUnique({ where: { id: req.params.id }, include: { team: true } })); } catch (e) { next(e); }
+    try {
+      const player = await prisma.player.findUnique({ where: { id: req.params.id }, include: { team: true } });
+      ok(res, shapePlayer(player));
+    } catch (e) { next(e); }
   }
+
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const b = req.body || {};
-      const player = await prisma.player.create({ data: {
-        teamId: b.teamId || null,
-        firstName: String(b.firstName || b.name || '').trim().split(/\s+/)[0] || 'Player',
-        lastName: String(b.lastName || (String(b.name || '').trim().split(/\s+/).slice(1).join(' ')) || '').trim() || 'Name',
-        displayName: b.displayName || b.name || null,
-        jerseyNumber: b.jerseyNumber != null ? Number(b.jerseyNumber) : null,
-        photoUrl: b.photoUrl || null,
-        position: b.position || null,
-        isCaptain: !!b.isCaptain,
-        isLibero: !!b.isLibero,
-      }});
-      ok(res, player, 'Player created');
+      const data = pickPlayerData(req.body || {});
+      const player = await prisma.player.create({
+        data: {
+          ...data,
+          firstName: data.firstName || 'Player',
+          lastName: data.lastName || 'Name',
+          teamId: data.teamId || null,
+        },
+        include: { team: true },
+      });
+      ok(res, shapePlayer(player), 'Player created');
     } catch (e) { next(e); }
   }
+
   static async update(req: Request, res: Response, next: NextFunction) {
     try {
-      const b = req.body || {};
-      const data: any = {};
-      for (const k of ['teamId','firstName','lastName','displayName','photoUrl','position','isCaptain','isLibero']) if (b[k] !== undefined) data[k] = b[k];
-      if (b.jerseyNumber !== undefined) data.jerseyNumber = b.jerseyNumber == null || b.jerseyNumber === '' ? null : Number(b.jerseyNumber);
-      if (b.name && !b.firstName && !b.lastName) { const parts = String(b.name).trim().split(/\s+/); data.firstName = parts[0]; data.lastName = parts.slice(1).join(' ') || 'Name'; data.displayName = b.name; }
-      const player = await prisma.player.update({ where: { id: req.params.id }, data });
-      ok(res, player, 'Player updated');
+      const existing = await prisma.player.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ success: false, error: { message: 'Player not found' }, timestamp: new Date().toISOString() });
+      const data = pickPlayerData(req.body || {});
+      const player = await prisma.player.update({ where: { id: req.params.id }, data, include: { team: true } });
+      if (data.photoKey !== undefined && data.photoKey !== existing.photoKey) {
+        await deleteStoredKeys([existing.photoKey, existing.thumbKey]);
+      }
+      ok(res, shapePlayer(player), 'Player updated');
     } catch (e) { next(e); }
   }
+
   static async remove(req: Request, res: Response, next: NextFunction) {
-    try { await prisma.player.delete({ where: { id: req.params.id } }); ok(res, { id: req.params.id }, 'Player deleted'); } catch (e) { next(e); }
+    try {
+      const existing = await prisma.player.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ success: false, error: { message: 'Player not found' }, timestamp: new Date().toISOString() });
+      await prisma.player.delete({ where: { id: req.params.id } });
+      await deleteStoredKeys([existing.photoKey, existing.thumbKey]);
+      ok(res, { id: req.params.id }, 'Player deleted');
+    } catch (e) { next(e); }
   }
 }

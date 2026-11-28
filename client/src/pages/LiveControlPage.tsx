@@ -13,6 +13,7 @@ import { Modal } from '../components/ui/Modal.js';
 import { Badge } from '../components/ui/Badge.js';
 import { Input, Label, Select } from '../components/ui/Input.js';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card.js';
+import { Avatar } from '../components/ui/Avatar.js';
 import { ScaledStage } from '../components/broadcast/ScaledStage.js';
 import { ScorebugOverlay } from '../components/broadcast/ScorebugOverlay.js';
 import { SCENE_COMPONENTS, TEMPLATE_COMPONENTS } from '../features/broadcast/templates.js';
@@ -23,6 +24,7 @@ import { cn } from '../utils/cn.js';
 import { buildCourtOutputUrl, resolveOutputBaseUrl } from '../utils/outputUrls.js';
 import { copyToClipboard } from '../utils/clipboard.js';
 import { withOverlayBg } from '../utils/overlay.js';
+import { CourtDiagram, assignmentsFromArray, assignmentsToArray, type LineupAssignments, type CourtPlayer } from '../components/lineup/CourtDiagram.js';
 
 type TeamKey = 'A' | 'B';
 type Conn = 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
@@ -41,7 +43,7 @@ const SCENE_BTNS: Array<{ scene: string; label: string; key?: string; cue: Cue }
   { scene: 'BREAK_SLATE', label: 'SLATE', key: '7', cue: { template: 'MATCH_INTRO', payload: {}, duration: null, autoReturn: false } },
 ];
 const TEMPLATE_TO_SCENE: Record<string, string> = {
-  MATCH_INTRO: 'BREAK_SLATE', TEAM_INTRO: 'LINEUPS', STARTING_LINEUP: 'LINEUPS', PLAYER_SPOTLIGHT: 'PLAYER_SPOTLIGHT', TEAM_COMPARISON: 'HEAD_TO_HEAD', MATCH_STATISTICS: 'MATCH_STATS', SET_RESULT: 'SET_BREAK', MATCH_MOMENTUM: 'MATCH_MOMENTUM', TOP_PERFORMERS: 'PLAYER_SPOTLIGHT', FINAL_MATCH_RESULT: 'FINAL', SET_ANALYSIS: 'SET_BREAK', PLAYER_LEADERBOARD: 'PLAYER_SPOTLIGHT',
+  MATCH_INTRO: 'BREAK_SLATE', TEAM_INTRO: 'LINEUPS', STARTING_LINEUP: 'LINEUPS', STARTING_SIX_COURT: 'LINEUPS', TEAM_SQUAD_PROFILES: 'LINEUPS', TEAM_ROSTER_GRID: 'LINEUPS', PLAYER_SPOTLIGHT: 'PLAYER_SPOTLIGHT', TEAM_COMPARISON: 'HEAD_TO_HEAD', MATCH_STATISTICS: 'MATCH_STATS', SET_RESULT: 'SET_BREAK', MATCH_MOMENTUM: 'MATCH_MOMENTUM', TOP_PERFORMERS: 'PLAYER_SPOTLIGHT', FINAL_MATCH_RESULT: 'FINAL', SET_ANALYSIS: 'SET_BREAK', PLAYER_LEADERBOARD: 'PLAYER_SPOTLIGHT', LEADERBOARD: 'MATCH_STATS', FIXTURES: 'BREAK_SLATE', PLAYER_LEADERS: 'PLAYER_SPOTLIGHT', PLAYER_LEADERS_GRID: 'MATCH_STATS', LEADERBOARD_COMBINED: 'MATCH_STATS',
 };
 const BREAK_TYPES = [
   { id: 'TEAM_A_TIMEOUT', label: 'Team A Timeout', defaultDuration: 30 },
@@ -203,6 +205,10 @@ export const LiveControlPage: React.FC = () => {
 
   const [conn, setConn] = useState<Conn>(socket.connected ? 'CONNECTED' : 'OFFLINE');
   const [selectedPlayer, setSelectedPlayer] = useState<{ side: TeamKey; playerId: string } | null>(null);
+  const selectionTimer = useRef<number | null>(null);
+  const [pendingAttribution, setPendingAttribution] = useState<{ clientEventId: string; team: TeamKey; action: string; eventId?: string | null; suggestedPlayerId?: string | null; expiresAt: number } | null>(null);
+  const attributionTimer = useRef<number | null>(null);
+  const ATTRIBUTION_WINDOW_MS = Number((import.meta as any).env?.VITE_ATTRIBUTION_WINDOW_MS || 6000);
   const [pendingMap, setPendingMap] = useState<Record<string, PendingState>>({});
   const [helpOpen, setHelpOpen] = useState(false);
   const [breakView, setBreakView] = useState(false);
@@ -228,6 +234,7 @@ export const LiveControlPage: React.FC = () => {
   const [nextLineups, setNextLineups] = useState<Record<TeamKey, string[]>>({ A: [], B: [] });
   const [previewState, setPreviewState] = useState<{ cue: Cue | null; version: number }>({ cue: null, version: 0 });
   const [cueBusy, setCueBusy] = useState<null | 'preview' | 'take' | 'clear'>(null);
+  const [introReady, setIntroReady] = useState<{ ready: boolean; total: number; loaded: number }>({ ready: false, total: 0, loaded: 0 });
   const [outputAcks, setOutputAcks] = useState<any[]>([]);
   const [graphicsMode, setGraphicsMode] = useState<'direct' | 'preview_take'>(() => {
     try { return (localStorage.getItem('qwesie.graphicsMode') as any) === 'preview_take' ? 'preview_take' : 'direct'; } catch { return 'direct'; }
@@ -254,20 +261,26 @@ export const LiveControlPage: React.FC = () => {
     queryKey: ['output-scene', matchId],
     queryFn: () => broadcastApi.getSceneState(matchId),
     enabled: !!matchId,
-    refetchInterval: socketHealthy ? false : 4000,
+    refetchInterval: socketHealthy ? false : 15000,
   });
   const { data: fetchedPreview } = useQuery({
     queryKey: ['output-preview', matchId],
     queryFn: () => broadcastApi.getPreview(matchId),
     enabled: !!matchId,
-    refetchInterval: socketHealthy ? false : 4000,
+    refetchInterval: socketHealthy ? false : 15000,
   });
   const { data: templates = [] } = useQuery({ queryKey: ['broadcast-templates'], queryFn: broadcastApi.getTemplates });
   const { data: graphicState, refetch: refetchGraphic } = useQuery({
     queryKey: ['broadcast-graphic', matchId],
     queryFn: () => broadcastApi.getGraphicState(matchId),
     enabled: !!matchId,
-    refetchInterval: socketHealthy ? false : 4000,
+    refetchInterval: socketHealthy ? false : 15000,
+  });
+  const { data: introSeq, refetch: refetchIntroSeq } = useQuery({
+    queryKey: ['broadcast-sequence', matchId],
+    queryFn: () => broadcastApi.getIntroSequence(matchId!),
+    enabled: !!matchId,
+    refetchInterval: 1000,
   });
 
   useEffect(() => { if (fetchedPreview) setPreviewState({ cue: fetchedPreview.cue || null, version: fetchedPreview.version || 0 }); }, [fetchedPreview]);
@@ -391,9 +404,32 @@ export const LiveControlPage: React.FC = () => {
   const runOp = useCallback(async (op: any) => {
     if (!matchId) return;
     setPending(op.key, 'pending');
+    const prev = qc.getQueryData<any>(['match', matchId]);
+    const applyOptimistic = () => {
+      if (!prev) return;
+      if (op.kind === 'point') {
+        const team = op.team as TeamKey; const cur = prev.current_set || 1; const idx = Math.max(0, Math.min(4, cur - 1));
+        const delta = op.delta ?? 1;
+        const nextScores = { A: [...(prev.set_scores?.A || [0,0,0,0,0])], B: [...(prev.set_scores?.B || [0,0,0,0,0])] };
+        nextScores[team][idx] = Math.max(0, (nextScores[team][idx] || 0) + delta);
+        qc.setQueryData(['match', matchId], { ...prev, teams: { ...prev.teams, [team]: { ...prev.teams[team], score: Math.max(0, (prev.teams?.[team]?.score || 0) + delta) } }, set_scores: nextScores, server: delta > 0 ? team : prev.server, perf: { ...(prev.perf || {}), source: 'cache', optimisticAt: new Date().toISOString() } });
+      } else if (op.kind === 'action') {
+        const action = String(op.action || '').toUpperCase();
+        const scoring = ['KILL','ACE','BLOCK'].includes(action);
+        const attackErr = action === 'ATTACK_ERROR';
+        const team = (scoring ? op.team : attackErr ? (op.team === 'A' ? 'B' : 'A') : null) as TeamKey | null;
+        if (team) {
+          const cur = prev.current_set || 1; const idx = Math.max(0, Math.min(4, cur - 1));
+          const nextScores: { A: number[]; B: number[] } = { A: [...(prev.set_scores?.A || [0,0,0,0,0])], B: [...(prev.set_scores?.B || [0,0,0,0,0])] };
+          nextScores[team][idx] = Math.max(0, (nextScores[team][idx] || 0) + 1);
+          qc.setQueryData(['match', matchId], { ...prev, teams: { ...prev.teams, [team]: { ...prev.teams[team], score: Math.max(0, (prev.teams?.[team]?.score || 0) + 1) } }, set_scores: nextScores, server: team, perf: { ...(prev.perf || {}), source: 'cache', optimisticAt: new Date().toISOString() } });
+        }
+      }
+    };
+    applyOptimistic();
     try {
       let state: any = null;
-      if (op.kind === 'point') state = await matchApi.point({ team: op.team, delta: 1, clientEventId: op.clientEventId }, matchId);
+      if (op.kind === 'point') state = await matchApi.point({ team: op.team, delta: op.delta ?? 1, clientEventId: op.clientEventId }, matchId);
       else if (op.kind === 'action') state = await matchApi.action({ team: op.team, action: op.action, playerId: op.playerId, clientEventId: op.clientEventId }, matchId);
       else if (op.kind === 'timeout') state = await matchApi.timeout({ team: op.team, clientEventId: op.clientEventId }, matchId);
       else if (op.kind === 'sub') state = await matchApi.substitution({ team: op.team, playerOutId: op.outId, playerInId: op.inId, clientEventId: op.clientEventId }, matchId);
@@ -405,6 +441,7 @@ export const LiveControlPage: React.FC = () => {
       setPending(op.key, 'sent'); window.setTimeout(() => setPending(op.key, 'idle'), 600);
       return state;
     } catch (e: any) {
+      if (prev) qc.setQueryData(['match', matchId], prev);
       setPending(op.key, 'failed');
       const c = getCourtConflict(e);
       if (c && (op.kind === 'status' && op.status === 'LIVE')) {
@@ -414,7 +451,7 @@ export const LiveControlPage: React.FC = () => {
       }
       throw e;
     }
-  }, [matchId, notify, qc]);
+  }, [matchId, notify, qc, match?.court]);
 
   const send = useCallback(async (op: any) => {
     if (!matchId) return;
@@ -437,13 +474,95 @@ export const LiveControlPage: React.FC = () => {
   const setPendingEnd = !!match?.flags?.pendingEnd;
   const setStarted = match?.status === 'LIVE' || match?.status === 'PAUSED' || match?.status === 'SUSPENDED';
   const scoringLocked = !match || match.status !== 'LIVE' || setPendingEnd;
-  const onPoint = (team: TeamKey) => { if (scoringLocked) return; if (!debounced(`pt-${team}`)) return; setSelectedPlayer(null); void send({ kind: 'point', key: `pt-${team}`, team, clientEventId: uuid() }); };
+  const clearAttributionWindow = useCallback(() => {
+    if (attributionTimer.current) { window.clearTimeout(attributionTimer.current); attributionTimer.current = null; }
+    setPendingAttribution(null);
+  }, []);
+
+  const startAttributionWindow = useCallback((clientEventId: string, team: TeamKey, action: string, eventId?: string | null, suggestedPlayerId?: string | null) => {
+    if (attributionTimer.current) window.clearTimeout(attributionTimer.current);
+    setPendingAttribution({ clientEventId, team, action, eventId: eventId || null, suggestedPlayerId: suggestedPlayerId || null, expiresAt: Date.now() + ATTRIBUTION_WINDOW_MS });
+    attributionTimer.current = window.setTimeout(() => { setPendingAttribution(null); attributionTimer.current = null; }, ATTRIBUTION_WINDOW_MS) as any;
+  }, [ATTRIBUTION_WINDOW_MS]);
+
+  const pushAttributionOnAir = useCallback(async (team: TeamKey, playerId: string, action: string, force = false) => {
+    if (!matchId || !match) return;
+    const setting = (scene?.autoTriggers as any)?.attributionOnAir || 'off';
+    if (!force && setting !== 'auto') return;
+    if (setting === 'off' && !force) return;
+    const p: any = (match.teams?.[team]?.lineup || []).find((x: any) => String(x.id) === String(playerId))
+      || (match.teams?.[team]?.bench || []).find((x: any) => String(x.id) === String(playerId));
+    try {
+      await broadcastApi.setGraphicState(matchId, {
+        template: 'PLAYER_ACTION',
+        visible: true,
+        durationSeconds: 5,
+        payload: {
+          team,
+          playerId,
+          playerName: p?.name || null,
+          jerseyNumber: p?.jerseyNumber ?? null,
+          photoUrl: p?.thumbUrl || p?.photoUrl || null,
+          action: String(action).toUpperCase(),
+        },
+      });
+      await refetchScene();
+    } catch (e) {
+      console.warn('Failed to push attribution on air', e);
+    }
+  }, [matchId, match, scene?.autoTriggers, refetchScene]);
+
+  const attributePendingToPlayer = useCallback(async (side: TeamKey, playerId: string) => {
+    if (!matchId || !pendingAttribution || pendingAttribution.team !== side) return false;
+    const evId = pendingAttribution.eventId || (match?.events || []).find((e: any) => e.clientEventId === pendingAttribution.clientEventId)?.id;
+    if (!evId) return false;
+    try {
+      const state = await matchApi.attributeEvent(matchId, String(evId), { playerId });
+      qc.setQueryData(['match', matchId], state);
+      const actionName = pendingAttribution.action;
+      clearAttributionWindow();
+      notify.success('Player attributed');
+      void pushAttributionOnAir(side, playerId, actionName);
+      return true;
+    } catch (e: any) {
+      notify.error(e?.message || 'Failed to attribute player');
+      return false;
+    }
+  }, [matchId, pendingAttribution, match?.events, qc, clearAttributionWindow, notify, pushAttributionOnAir]);
+
+  const onPoint = (team: TeamKey) => { if (scoringLocked) return; if (!debounced(`pt-${team}`)) return; const clientEventId = uuid(); setSelectedPlayer(null); startAttributionWindow(clientEventId, team, 'POINT'); void send({ kind: 'point', key: `pt-${team}`, team, clientEventId }); };
   const onAction = (team: TeamKey, action: string) => {
     if (scoringLocked) return;
-    const playerId = selectedPlayer?.side === team ? selectedPlayer.playerId : undefined;
-    const dedupeKey = `act-${team}-${action}-${playerId||'team'}`; if (!debounced(dedupeKey)) return;
-    void send({ kind: 'action', key: dedupeKey, team, action, playerId, clientEventId: uuid() });
-    if (playerId) clearSelectionLater(12000);
+    const upper = String(action).toUpperCase();
+    let playerId = selectedPlayer?.side === team ? selectedPlayer.playerId : undefined;
+    // Aces suggest the server (P1 = rotation position 1)
+    let suggestedPlayerId: string | undefined;
+    if (!playerId && upper === 'ACE') {
+      const p1 = match?.teams?.[team]?.lineup?.[0];
+      if (p1?.id) suggestedPlayerId = String(p1.id);
+    }
+    if (!playerId && upper === 'BLOCK') {
+      // Blocks allow choosing the blocker - leave unattributed for quick pick
+      suggestedPlayerId = undefined;
+    }
+    const dedupeKey = `act-${team}-${upper}-${playerId||'team'}`; if (!debounced(dedupeKey)) return;
+    const clientEventId = uuid();
+    void send({ kind: 'action', key: dedupeKey, team, action: upper, playerId, clientEventId });
+    if (playerId) {
+      clearSelectionLater(12000);
+      void pushAttributionOnAir(team, playerId, upper);
+    } else if (['ACE','KILL','BLOCK','ATTACK_ERROR','POINT'].includes(upper)) {
+      startAttributionWindow(clientEventId, team, upper, null, suggestedPlayerId);
+    }
+  };
+  const canMinus = (team: TeamKey) => !!match && match.status === 'LIVE' && !setPendingEnd && (match.teams?.[team]?.score || 0) > 0;
+  const onCorrection = (team: TeamKey, delta: -1) => {
+    if (!canMinus(team)) return;
+    if (!debounced(`pt-${team}-${delta}`)) return;
+    const clientEventId = uuid();
+    void send({ kind: 'point', key: `pt-${team}-minus`, team, delta, clientEventId })
+      .then(() => notify.info('Manual score correction applied.', { title: '-1 correction', action: { label: 'Undo', onClick: () => onUndo() }, durationMs: 6000 }))
+      .catch(() => {});
   };
   const onTimeout = (team: TeamKey) => { if (!match || match.status !== 'LIVE' || setPendingEnd) return; if (!debounced(`to-${team}`)) return; void send({ kind: 'timeout', key: `to-${team}`, team, clientEventId: uuid() }); };
   const lastUndoLabel = useMemo(() => describeUndo((match?.events || [])[0], match), [match]);
@@ -646,7 +765,13 @@ export const LiveControlPage: React.FC = () => {
       const nextSet = match.status === 'BETWEEN_SETS' ? match.current_set : (match.current_set || 1);
       for (const side of ['A','B'] as const) {
         const ids = nextLineups[side].filter(Boolean);
-        if (ids.length === 6) await lineupApi.set(matchId, side, nextSet, { players: ids.map((playerId, i) => ({ rotationPos: i + 1, playerId })) });
+        if (ids.length === 6) {
+          await lineupApi.set(matchId, side, nextSet, { players: ids.map((playerId, i) => ({ rotationPos: i + 1, playerId })) });
+          const teamId = match.teams[side]?.id;
+          if (teamId) {
+            try { localStorage.setItem(`qwesie:last-lineup:${teamId}`, JSON.stringify(assignmentsFromArray(ids))); } catch {}
+          }
+        }
       }
       await send({ kind: 'startSet', key: `startset-${nextSet}`, setNumber: nextSet, servingSide: startSetServing, clientEventId: uuid() });
       setStartSetOpen(false);
@@ -716,7 +841,18 @@ export const LiveControlPage: React.FC = () => {
       if (k === 'w') onPoint('B');
       if (k === 'z') onUndo();
       if (k === 'e') { if (setCanEnd || pendingEndFlag) void onEndSet(); else if (match?.status === 'LIVE') { setEndSetEarlyReason(''); setEndSetEarlyOpen(true); } }
-      if (e.key >= '1' && e.key <= '7') { const btn = SCENE_BTNS.find(b => b.key === e.key); if (btn) { e.preventDefault(); void loadPreview(btn.cue); if (tab !== 'graphics') setTab('graphics'); } }
+      if (e.key >= '1' && e.key <= '7') {
+        if (tab === 'graphics') { const btn = SCENE_BTNS.find(b => b.key === e.key); if (btn) { e.preventDefault(); void loadPreview(btn.cue); } }
+        else {
+          const idx = Number(e.key) - 1;
+          const ctxSide = pendingAttribution?.team || selectedPlayer?.side || (match.server as TeamKey) || 'A';
+          const p = match.teams[ctxSide]?.lineup?.[idx];
+          if (p?.id) { e.preventDefault(); const pid = String(p.id); if (pendingAttribution && pendingAttribution.team === ctxSide) { void attributePendingToPlayer(ctxSide, pid); } else { setSelectedPlayer({ side: ctxSide, playerId: pid }); clearSelectionLater(12000); } }
+        }
+      }
+      if (k === 'a' && tab === 'score') { e.preventDefault(); const side = pendingAttribution?.team || selectedPlayer?.side || (match.server as TeamKey) || 'A'; onAction(side, 'ACE'); }
+      if (k === 'k' && tab === 'score') { e.preventDefault(); const side = pendingAttribution?.team || selectedPlayer?.side || (match.server as TeamKey) || 'A'; onAction(side, 'KILL'); }
+      if (k === 'b' && tab === 'score') { e.preventDefault(); const side = pendingAttribution?.team || selectedPlayer?.side || (match.server as TeamKey) || 'A'; onAction(side, 'BLOCK'); }
       if (e.key === 'Enter') { e.preventDefault(); void takePreview(); }
       if (e.key === 'Escape') { e.preventDefault(); void clearProgram(); }
       if (e.key === 'F1') { e.preventDefault(); onTimeout('A'); } if (e.key === 'F2') { e.preventDefault(); onTimeout('B'); }
@@ -788,21 +924,34 @@ export const LiveControlPage: React.FC = () => {
             <Button size="sm" variant="outline" onClick={()=>onTimeout(side)} disabled={toDisabled}>Timeout</Button>
           </div>
         </div>
-        <Button variant="secondary" onClick={()=>onPoint(side)} disabled={!canPlay} title={!canPlay ? whyNoPlay : `+1 point`} className={cn('h-14 md:h-16 text-4xl font-black text-accent-fg border-0 shadow-lg', bg)}>+1</Button>
+        <div className="grid grid-cols-[72px_1fr] gap-1.5">
+          <Button variant="outline" onClick={()=>onCorrection(side, -1)} disabled={!canMinus(side)} title={canMinus(side) ? '-1 manual correction' : 'Cannot remove point now'} className="h-14 md:h-16 text-2xl font-black">-1</Button>
+          <Button variant="secondary" onClick={()=>onPoint(side)} disabled={!canPlay} title={!canPlay ? whyNoPlay : `+1 point`} className={cn('h-14 md:h-16 text-4xl font-black text-accent-fg border-0 shadow-lg', bg)}>+1</Button>
+        </div>
         <div className="grid grid-cols-3 gap-1.5">
           {lineup.slice(0,6).map((p: any, idx: number) => {
             const pid = String(p?.id || '');
             const sel = selectedPlayer?.side===side && selectedPlayer.playerId===pid;
             const serving = match.server===side && team.serverPosition === (idx + 1);
+            const pendingForTeam = pendingAttribution?.team === side;
             return (
-              <button key={pid || idx} onClick={() => { if (!pid) return; const nextSel = sel ? null : { side, playerId: pid }; setSelectedPlayer(nextSel); if (nextSel) clearSelectionLater(12000); }}
-                className={cn('min-h-[52px] rounded-lg border px-1.5 py-1 text-left transition touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-focus', sel ? 'border-accent bg-accent/15 ring-1 ring-accent/40' : 'border-border bg-surface-sunken hover:bg-surface-alt')}>
+              <button key={pid || idx} onClick={() => {
+                  if (!pid) return;
+                  if (pendingAttribution && pendingAttribution.team === side) { void attributePendingToPlayer(side, pid); return; }
+                  const nextSel = sel ? null : { side, playerId: pid }; setSelectedPlayer(nextSel); if (nextSel) clearSelectionLater(12000);
+                }}
+                className={cn('min-h-[60px] rounded-lg border px-1.5 py-1 text-left transition touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-focus', sel ? 'border-accent bg-accent/15 ring-1 ring-accent/40' : pendingForTeam ? 'border-warning/50 bg-warning-subtle/40' : 'border-border bg-surface-sunken hover:bg-surface-alt')}>
                 <div className="flex items-center justify-between text-[10px] text-fg-muted leading-none mb-0.5">
                   <span>P{idx+1}{serving && <span className="ml-1 text-success font-bold">• SERVE</span>}</span>
                   <span className="flex gap-0.5">{p?.isCaptain && <span className="px-1 rounded border border-warning/40 bg-warning-subtle text-warning font-bold">C</span>}{p?.isLibero && <span className="px-1 rounded border border-info/40 bg-info-subtle text-info font-bold">L</span>}</span>
                 </div>
-                <div className="font-bold text-[13px] text-fg truncate leading-tight"><span className="text-fg-muted mr-1">#{p?.jerseyNumber ?? '-'}</span>{shortName(p?.name)}</div>
-                <div className="text-[10px] text-fg-subtle truncate">{p?.position || ''}</div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Avatar src={p?.thumbUrl || p?.photoUrl} name={p?.name} size={28} color={side==='A' ? 'var(--team-a)' : 'var(--team-b)'} textColor={side==='A' ? 'var(--team-a-text)' : 'var(--team-b-text)'} className="rounded-md" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-[13px] text-fg truncate leading-tight"><span className="text-fg-muted mr-1">#{p?.jerseyNumber ?? '-'}</span>{shortName(p?.name)}</div>
+                    <div className="text-[10px] text-fg-subtle truncate">{p?.position || ''}</div>
+                  </div>
+                </div>
               </button>
             );
           })}
@@ -831,45 +980,76 @@ export const LiveControlPage: React.FC = () => {
 
   const renderBreakPanel = () => {
     const nextSet = match.current_set;
+    const toCourtPlayers = (side: TeamKey): CourtPlayer[] => {
+      const team = side === 'A' ? A : B;
+      return [...(team.lineup || []), ...(team.bench || [])].map((p: any) => ({
+        id: String(p.id || ''),
+        name: p.name || `#${p.jerseyNumber ?? '?'}`,
+        jerseyNumber: p.jerseyNumber ?? null,
+        photoUrl: p.photoUrl || null,
+        thumbUrl: p.thumbUrl || p.photoUrl || null,
+        isLibero: !!p.isLibero,
+        position: p.position || null,
+      })).filter(p => p.id);
+    };
     const renderPicker = (side: TeamKey) => {
       const team = side === 'A' ? A : B;
-      const roster = [...(team.lineup || []), ...(team.bench || [])];
-      const base = (team.lineup || []).slice(0,6).map((p:any)=>String(p.id||''));
+      const base = (team.lineup || []).slice(0, 6).map((p: any) => String(p.id || ''));
       const ids = nextLineups[side].length === 6 ? nextLineups[side] : base;
-      const chosen = new Set(ids.filter(Boolean));
+      const roster = toCourtPlayers(side);
+      const rosterIds = new Set(roster.map(p => p.id));
+      const copySaved = () => {
+        const teamId = team?.id;
+        if (!teamId) return notify.error('Team not available');
+        try {
+          const raw = localStorage.getItem(`qwesie:last-lineup:${teamId}`);
+          if (!raw) return notify.error('No saved lineup found for this team');
+          const parsed = JSON.parse(raw) as any;
+          const arr = [1,2,3,4,5,6].map(i => {
+            const id = parsed?.[i] || parsed?.[String(i)] || null;
+            return id && rosterIds.has(String(id)) ? String(id) : '';
+          });
+          setNextLineups(nl => ({ ...nl, [side]: arr }));
+          notify.success(`${team.shortName || side} saved lineup loaded`);
+        } catch { notify.error('Failed to load saved lineup'); }
+      };
+      const resetPrev = () => setNextLineups(nl => ({ ...nl, [side]: base.map(v => v || '') }));
       return (
-        <div className="rounded-xl border border-border bg-surface p-3">
-          <div className="font-bold text-fg mb-2">{team.shortName || team.name} - starting six (Set {nextSet})</div>
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            {Array.from({length:6}).map((_,i) => (
-              <label key={i} className="text-xs text-fg-muted flex flex-col gap-1"><span className="text-fg-muted">P{i+1}</span>
-                <select value={ids[i] || ''} onChange={(e)=>{ const v=e.target.value; setNextLineups(nl => { const arr=[...(nl[side].length===6?nl[side]:ids)]; arr[i]=v; return { ...nl, [side]: arr }; }); }} className="bg-surface-sunken border border-border-strong rounded px-2 py-2 text-sm text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-focus">
-                  <option value="">Select player</option>
-                  {roster.map((p:any) => <option key={String(p.id)} value={String(p.id)} disabled={chosen.has(String(p.id)) && ids[i] !== String(p.id)}>#{p.jerseyNumber ?? '-'} {shortName(p.name)}</option>)}
-                </select>
-              </label>
-            ))}
+        <div className="rounded-xl border border-border bg-surface p-3 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={resetPrev}>Previous set</Button>
+            <Button variant="outline" size="sm" onClick={copySaved}>Copy saved lineup</Button>
           </div>
+          <CourtDiagram
+            title={`${team.shortName || team.name} - starting six (Set ${nextSet})`}
+            value={assignmentsFromArray(ids)}
+            roster={roster}
+            onChange={(next: LineupAssignments) => setNextLineups(nl => ({ ...nl, [side]: assignmentsToArray(next).map(v => v || '') }))}
+            teamColor={team.primaryColor}
+            teamTextColor={team.textColor}
+          />
         </div>
       );
     };
     const setSummary = (match.setHistory||[]).filter((s:any)=>s.winner!=null || s.scoreA>0 || s.scoreB>0).map((s:any)=>`S${s.number} ${s.scoreA}-${s.scoreB}`).join(' · ') || '-';
     return (
       <div className="flex-1 min-h-0 overflow-auto p-3">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-3">
-          <div className="xl:col-span-1 rounded-xl border border-border bg-surface-raised p-4 flex flex-col gap-3">
-            <div className="text-xs uppercase tracking-widest text-fg-muted">Break / Set interval</div>
-            <div className="text-5xl font-black tabular-nums text-fg"><CountdownText endsAt={scene?.timerEndsAt} /></div>
-            <div className="text-3xl font-black"><span className="text-info">{A.sets}</span><span className="text-fg-subtle"> - </span><span className="text-teamB">{B.sets}</span></div>
-            <div className="text-sm text-fg-muted">Set summary: {setSummary}</div>
-            <div className="rounded-lg border border-warning/30 bg-warning-subtle p-2 text-warning text-sm">Next: <b>Set {match.current_set}</b>. Confirm lineups then start.</div>
+        <div className="max-w-7xl mx-auto grid grid-cols-1 gap-3">
+          <div className="rounded-xl border border-border bg-surface-raised p-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-widest text-fg-muted">Break / Set interval</div>
+              <div className="text-4xl font-black tabular-nums text-fg"><CountdownText endsAt={scene?.timerEndsAt} /></div>
+              <div className="text-2xl font-black"><span className="text-info">{A.sets}</span><span className="text-fg-subtle"> - </span><span className="text-teamB">{B.sets}</span></div>
+              <div className="text-sm text-fg-muted">Set summary: {setSummary}</div>
+              <div className="rounded-lg border border-warning/30 bg-warning-subtle p-2 text-warning text-sm mt-2">Next: <b>Set {match.current_set}</b>. Confirm lineups then start.</div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" onClick={onStartSet}><Play className="w-4 h-4" />Start set {match.current_set}</Button>
               <Button variant="secondary" onClick={onResumeMatch}><Play className="w-4 h-4" />Resume match</Button>
               <Button variant="outline" onClick={()=>setBreakView(false)}>Back to scoring</Button>
             </div>
           </div>
-          <div className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">{renderPicker('A')}{renderPicker('B')}</div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">{renderPicker('A')}{renderPicker('B')}</div>
         </div>
       </div>
     );
@@ -919,7 +1099,16 @@ export const LiveControlPage: React.FC = () => {
     steps.push({ key: 'final', label: 'Final', sub: finalDone ? `${A.sets}-${B.sets}` : undefined, active: finalActive, done: finalDone });
     return (
       <div className="px-2 pt-2 pb-1 overflow-x-auto">
-        <div className="flex items-center gap-1 min-w-max text-[11px]">
+        <div className="flex items-center gap-2 min-w-max text-[11px]">
+          <div className="flex items-center gap-1 mr-2">
+            <Button size="sm" variant="outline" onClick={()=>onCorrection('A', -1)} disabled={!canMinus('A')} className="px-1.5 py-0.5 text-xs">-1</Button>
+            <span className="font-bold text-teamA">{A.score}</span>
+            <Button size="sm" variant="outline" onClick={()=>onPoint('A')} disabled={!canPlay} className="px-1.5 py-0.5 text-xs">+1</Button>
+            <span className="text-fg-subtle mx-1">-</span>
+            <Button size="sm" variant="outline" onClick={()=>onCorrection('B', -1)} disabled={!canMinus('B')} className="px-1.5 py-0.5 text-xs">-1</Button>
+            <span className="font-bold text-teamB">{B.score}</span>
+            <Button size="sm" variant="outline" onClick={()=>onPoint('B')} disabled={!canPlay} className="px-1.5 py-0.5 text-xs">+1</Button>
+          </div>
           {steps.map((st, i) => (
             <React.Fragment key={st.key}>
               {i > 0 && <span className="text-fg-subtle">›</span>}
@@ -954,8 +1143,26 @@ export const LiveControlPage: React.FC = () => {
           <div className="min-h-0 flex flex-col gap-1.5 rounded-xl border border-border bg-surface-sunken p-2">
             <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-1.5 text-center">
               <div className="text-[11px] tracking-widest text-fg-muted">SET {match.current_set} · SETS {A.sets}-{B.sets}</div>
-              <div className="text-5xl md:text-6xl font-black tabular-nums leading-none"><span className="text-info">{A.score}</span><span className="text-fg-subtle"> - </span><span className="text-teamB">{B.score}</span></div>
-              {selectedPlayer && <div className="text-[11px] text-warning bg-warning-subtle border border-warning/30 rounded-full px-2.5 py-0.5 max-w-full truncate">Selected: #{(match.teams[selectedPlayer.side].lineup||[]).find((p:any)=>String(p.id)===selectedPlayer.playerId)?.jerseyNumber ?? '?'} {(match.teams[selectedPlayer.side].lineup||[]).find((p:any)=>String(p.id)===selectedPlayer.playerId)?.name || ''}</div>}
+              <div className="flex items-center justify-center gap-2">
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" variant="outline" onClick={()=>onPoint('A')} disabled={!canPlay} className="px-2 py-1">+1</Button>
+                  <Button size="sm" variant="outline" onClick={()=>onCorrection('A', -1)} disabled={!canMinus('A')} className="px-2 py-1">-1</Button>
+                </div>
+                <div className="text-5xl md:text-6xl font-black tabular-nums leading-none"><span className="text-info">{A.score}</span><span className="text-fg-subtle"> - </span><span className="text-teamB">{B.score}</span></div>
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" variant="outline" onClick={()=>onPoint('B')} disabled={!canPlay} className="px-2 py-1">+1</Button>
+                  <Button size="sm" variant="outline" onClick={()=>onCorrection('B', -1)} disabled={!canMinus('B')} className="px-2 py-1">-1</Button>
+                </div>
+              </div>
+              {pendingAttribution && (
+                <div className="text-[11px] text-warning bg-warning-subtle border border-warning/30 rounded-full px-2.5 py-1 max-w-full">
+                  Attribute {pendingAttribution.action} ({pendingAttribution.team}) - tap player ({Math.max(0, Math.ceil((pendingAttribution.expiresAt - Date.now())/1000))}s)
+                  {pendingAttribution.suggestedPlayerId && (() => { const p: any = (match.teams[pendingAttribution.team].lineup||[]).find((x:any)=>String(x.id)===String(pendingAttribution.suggestedPlayerId)); return p ? <button type="button" className="ml-2 underline font-semibold" onClick={() => void attributePendingToPlayer(pendingAttribution.team, String(p.id))}>Suggest #{p.jerseyNumber ?? '?'} {p.name || ''}</button> : null; })()}
+                  {pendingAttribution.action === 'BLOCK' && <span className="ml-2 text-fg-muted">Choose blocker</span>}
+                  <button type="button" className="ml-2 underline" onClick={clearAttributionWindow}>Skip</button>
+                </div>
+              )}
+              {selectedPlayer && !pendingAttribution && <div className="text-[11px] text-warning bg-warning-subtle border border-warning/30 rounded-full px-2.5 py-0.5 max-w-full truncate">Selected: #{(match.teams[selectedPlayer.side].lineup||[]).find((p:any)=>String(p.id)===selectedPlayer.playerId)?.jerseyNumber ?? '?'} {(match.teams[selectedPlayer.side].lineup||[]).find((p:any)=>String(p.id)===selectedPlayer.playerId)?.name || ''}</div>}
               <div className="flex gap-2 flex-wrap justify-center">
                 {(() => {
                   const s = match.status;
@@ -976,7 +1183,21 @@ export const LiveControlPage: React.FC = () => {
               {(match.status === 'SCHEDULED' || match.status === 'READY') && <div className="text-[11px] text-fg-muted">Scoring starts after Start Set.</div>}
               {match.status === 'LIVE' && !pendingEndFlag && <button type="button" onClick={() => { setEndSetEarlyReason(''); setEndSetEarlyOpen(true); }} className="text-[11px] text-fg-subtle underline underline-offset-2 hover:text-fg">End set early…</button>}
               <Button variant="danger" onClick={()=>onUndo()} title={lastUndoLabel} className="w-full max-w-[260px] text-sm py-2.5"><RotateCcw className="w-4 h-4"/>{lastUndoLabel || 'UNDO (Z)'}</Button>
-              <div className="w-full mt-0.5 min-h-0"><div className="text-[11px] text-fg-muted mb-1">Last 5 events (tap to undo)</div><div className="grid gap-1">{lastEvents.map((ev:any, i:number) => (<button key={ev.id || ev.seq || i} onClick={()=>onUndo(ev.clientEventId || ev.id)} className="text-left px-2 py-1.5 rounded-lg border border-border bg-background/50 hover:bg-surface-alt text-[11px] leading-tight focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"><b className={ev.team==='A'?'text-teamA':ev.team==='B'?'text-teamB':'text-fg-muted'}>{ev.team || 'SYS'}</b> {ev.action === 'ACTION_RECORDED' ? String(ev.payload?.action||'ACTION') : ev.action} <span className="text-fg-subtle">{ev.time || ''}</span></button>))}{!lastEvents.length && <div className="text-[11px] text-fg-subtle">No events</div>}</div></div>
+              <div className="w-full mt-0.5 min-h-0"><div className="text-[11px] text-fg-muted mb-1">Last 5 events (tap to attribute/undo)</div><div className="grid gap-1">{lastEvents.map((ev:any, i:number) => {
+                const actionName = ev.action === 'ACTION_RECORDED' ? String(ev.payload?.action||'ACTION') : ev.action;
+                const scoring = ev.action === 'POINT_AWARDED' || (ev.action === 'ACTION_RECORDED' && ['KILL','ACE','BLOCK','ATTACK_ERROR','POINT'].includes(String(ev.payload?.action||'').toUpperCase()));
+                const unattributed = scoring && !ev.playerId && !ev.payload?.playerId;
+                const attrPid = ev.playerId || ev.payload?.playerId;
+                const canAir = !!attrPid && !!ev.team && scoring && String(ev.payload?.action || actionName).toUpperCase() !== 'ATTACK_ERROR';
+                const oneClick = ((scene?.autoTriggers as any)?.attributionOnAir === 'one-click');
+                return (
+                  <div key={ev.id || ev.seq || i} className="flex items-center gap-1">
+                    <button onClick={()=> { if (unattributed && ev.team) { startAttributionWindow(ev.clientEventId || String(ev.id), ev.team, actionName, ev.id); } else { onUndo(ev.clientEventId || ev.id); } }} className="flex-1 text-left px-2 py-1.5 rounded-lg border border-border bg-background/50 hover:bg-surface-alt text-[11px] leading-tight focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"><b className={ev.team==='A'?'text-teamA':ev.team==='B'?'text-teamB':'text-fg-muted'}>{ev.team || 'SYS'}</b> {actionName} {unattributed ? <span className="text-warning">(tap player)</span> : attrPid ? <span className="text-success">• attributed</span> : null} <span className="text-fg-subtle">{ev.time || ''}</span></button>
+                    {canAir && oneClick && <Button size="sm" variant="outline" onClick={()=>void pushAttributionOnAir(ev.team as TeamKey, String(attrPid), String(ev.payload?.action || actionName), true)} title="Show on air">Air</Button>}
+                    <Button size="sm" variant="ghost" onClick={()=>onUndo(ev.clientEventId || ev.id)} title="Undo"><RotateCcw className="w-3 h-3"/></Button>
+                  </div>
+                );
+              })}{!lastEvents.length && <div className="text-[11px] text-fg-subtle">No events</div>}</div></div>
             </div>
           </div>
           {renderTeamHalf('B')}
@@ -984,6 +1205,26 @@ export const LiveControlPage: React.FC = () => {
       ) : renderBreakPanel()}
     </div>
   );
+
+  const preloadIntroImages = async (urls: string[]) => {
+    const unique = Array.from(new Set((urls || []).filter(u => /^(https?:\/\/|\/)/.test(String(u)))));
+    setIntroReady({ ready: false, total: unique.length, loaded: 0 });
+    let loaded = 0;
+    await Promise.all(unique.map(src => new Promise<void>((resolve) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => { loaded += 1; setIntroReady({ ready: loaded >= unique.length, total: unique.length, loaded }); resolve(); };
+      img.onerror = () => { loaded += 1; setIntroReady({ ready: loaded >= unique.length, total: unique.length, loaded }); resolve(); };
+      img.src = src;
+    })));
+    setIntroReady({ ready: true, total: unique.length, loaded: unique.length });
+  };
+
+  const introCountdown = (() => {
+    if (!introSeq?.endsAt) return null;
+    const ms = Math.max(0, new Date(introSeq.endsAt).getTime() - Date.now());
+    return `${Math.ceil(ms / 1000)}s`;
+  })();
 
   const renderGraphicsTab = () => {
     const onAirGraphicName = scene?.template ? String(scene.template).replace(/_/g, ' ') : (scene?.scene && scene.scene !== 'PLAY' ? String(scene.scene).replace(/_/g, ' ') : 'Scorebug');
@@ -1032,6 +1273,24 @@ export const LiveControlPage: React.FC = () => {
               <div className={cn('text-[11px] px-2 py-1 rounded border font-semibold', programOnAir ? 'border-danger/40 text-danger bg-danger-subtle' : 'border-border text-fg-muted bg-surface-sunken')}>{programOnAir ? `ON AIR: ${onAirGraphicName}` : 'ON AIR: Scorebug / Clear'}</div>
             </div>
             <div className="text-[11px] text-fg-muted mb-2">Preview: <span className="text-fg font-semibold">{cueLabel(previewState.cue)}</span></div>
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              <Label className="!mb-0 text-[11px]">Player attribution on air</Label>
+              <select
+                className="h-8 rounded-[8px] border border-border-strong bg-surface-sunken px-2 text-xs text-fg"
+                value={(scene?.autoTriggers as any)?.attributionOnAir || 'off'}
+                onChange={async (e) => {
+                  if (!matchId) return;
+                  const value = e.target.value as 'off' | 'auto' | 'one-click';
+                  try { await broadcastApi.setAutoTriggers(matchId, { attributionOnAir: value }); await refetchScene(); }
+                  catch (err: any) { notify.error(err?.message || 'Failed to update attribution setting'); }
+                }}
+                disabled={!matchId}
+              >
+                <option value="off">Off</option>
+                <option value="auto">Auto</option>
+                <option value="one-click">One-click</option>
+              </select>
+            </div>
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
               {SCENE_BTNS.map(b => (
                 <Button key={b.scene} size="sm" variant={(previewState.cue?.template || null) === (b.cue.template || null) ? 'primary' : 'outline'} onClick={()=>void loadPreview(b.cue)} title={`Load ${b.label} to preview${b.key ? ` (${b.key})` : ''}`}>
@@ -1111,6 +1370,40 @@ export const LiveControlPage: React.FC = () => {
               )}
             </div>
           </Card>
+
+          <Card className="!p-3">
+            <CardHeader><CardTitle>Intro Sequence</CardTitle><Play className="w-4 h-4 text-fg-muted" /></CardHeader>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className={cn('px-2 py-1 rounded border font-semibold', introSeq?.status === 'running' ? 'border-success/40 bg-success-subtle text-success' : introSeq?.status === 'paused' ? 'border-warning/40 bg-warning-subtle text-warning' : 'border-border bg-surface-sunken text-fg-muted')}>{String(introSeq?.status || 'idle').toUpperCase()}</span>
+                <span className="text-fg-muted">Step {(introSeq?.index ?? 0) + 1}/{Math.max(1, (introSeq?.steps || []).filter((s:any)=>s.enabled!==false).length)}</span>
+                {introSeq?.status === 'running' && <span className="text-warning font-semibold">Next in {introCountdown || '-'}</span>}
+                <span className="text-fg-muted">Mode: {graphicsMode === 'preview_take' ? 'Preview-then-Take' : 'Direct'}</span>
+              </div>
+              <div className="text-[11px] text-fg-muted">Images: {introReady.loaded}/{introReady.total} ready {introReady.ready ? '• OK' : ''}</div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={async ()=>{ if(!matchId) return; const seq = introSeq?.steps?.length ? introSeq : await broadcastApi.getIntroSequence(matchId); await preloadIntroImages(seq?.preload || []); await broadcastApi.startIntroSequence(matchId, { regenerate: !introSeq?.steps?.length, mode: graphicsMode }); await refetchIntroSeq(); }}>Start</Button>
+                <Button size="sm" variant="outline" onClick={async ()=>{ if(!matchId) return; await broadcastApi.controlIntroSequence(matchId,{action:'prev'}); await refetchIntroSeq(); }}>Previous</Button>
+                <Button size="sm" variant="outline" onClick={async ()=>{ if(!matchId) return; await broadcastApi.controlIntroSequence(matchId,{action:introSeq?.status==='paused'?'resume':'pause'}); await refetchIntroSeq(); }}>{introSeq?.status==='paused'?'Resume':'Pause'}</Button>
+                <Button size="sm" variant="outline" onClick={async ()=>{ if(!matchId) return; await broadcastApi.controlIntroSequence(matchId,{action:'next'}); await refetchIntroSeq(); }}>Next/Skip</Button>
+                <Button size="sm" variant="danger" onClick={async ()=>{ if(!matchId) return; await broadcastApi.controlIntroSequence(matchId,{action:'stop'}); await refetchIntroSeq(); }}>Stop</Button>
+                <Button size="sm" variant="outline" onClick={async ()=>{ if(!matchId) return; await broadcastApi.startIntroSequence(matchId,{regenerate:true, mode:graphicsMode}); await refetchIntroSeq(); }}>Regenerate</Button>
+              </div>
+              <div className="max-h-52 overflow-auto border border-border rounded-lg divide-y divide-border bg-surface-sunken">
+                {(introSeq?.steps || []).map((s: any, i: number) => (
+                  <div key={s.id || i} className={cn('px-2 py-1.5 text-xs flex items-center gap-2', i === introSeq?.index ? 'bg-accent/10' : '')}>
+                    <button type="button" className={cn('w-4 h-4 rounded border', s.enabled !== false ? 'bg-accent border-accent' : 'border-border-strong')} title="Enable/disable" onClick={async ()=>{ if(!matchId||!introSeq) return; const steps=[...introSeq.steps]; steps[i]={...steps[i], enabled: steps[i].enabled===false}; await broadcastApi.updateIntroSequence(matchId,{steps}); await refetchIntroSeq(); }} />
+                    <span className="flex-1 truncate">{s.label || s.template}</span>
+                    <input className="w-16 h-7 rounded border border-border bg-surface px-1 text-xs" type="number" min={1} max={120} value={Math.round((s.durationMs||8000)/1000)} onChange={async (e)=>{ if(!matchId||!introSeq) return; const steps=[...introSeq.steps]; steps[i]={...steps[i], durationMs: Math.max(1000, Number(e.target.value||8)*1000)}; await broadcastApi.updateIntroSequence(matchId,{steps}); await refetchIntroSeq(); }} />
+                    <span className="text-fg-subtle">s</span>
+                    <button type="button" className="text-fg-muted hover:text-fg" title="Move up" onClick={async ()=>{ if(!matchId||!introSeq||i===0) return; const steps=[...introSeq.steps]; const [it]=steps.splice(i,1); steps.splice(i-1,0,it); await broadcastApi.updateIntroSequence(matchId,{steps}); await refetchIntroSeq(); }}>↑</button>
+                    <button type="button" className="text-fg-muted hover:text-fg" title="Move down" onClick={async ()=>{ if(!matchId||!introSeq||i>=introSeq.steps.length-1) return; const steps=[...introSeq.steps]; const [it]=steps.splice(i,1); steps.splice(i+1,0,it); await broadcastApi.updateIntroSequence(matchId,{steps}); await refetchIntroSeq(); }}>↓</button>
+                  </div>
+                ))}
+                {!introSeq?.steps?.length && <div className="px-2 py-3 text-xs text-fg-subtle">No sequence generated. Click Start or Regenerate.</div>}
+              </div>
+            </div>
+          </Card>
         </div>
       </div>
     </div>
@@ -1174,7 +1467,7 @@ export const LiveControlPage: React.FC = () => {
 
       {/* Scorebug settings moved to /design/scorebug; Live Control keeps a small theme picker. */}
 
-      {helpOpen && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={()=>setHelpOpen(false)}><div className="w-full max-w-2xl bg-surface-raised border border-border-strong rounded-xl p-5 text-fg" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between mb-3"><div className="text-xl font-bold font-display">Keyboard shortcuts</div><button onClick={()=>setHelpOpen(false)} className="p-1.5 rounded-[10px] text-fg-muted hover:text-fg hover:bg-surface-alt focus:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label="Close"><X className="w-5 h-5" /></button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-fg"><div>Q / W - +1 Team A / B</div><div>Z - Undo last</div><div>E - End set</div><div>F1/F2 or !/@ - Timeout A/B</div><div>1-7 - Load graphic to Preview (switches to Graphics)</div><div>Enter - TAKE Preview to Program</div><div>Esc - CLEAR Program (restore scorebug)</div><div>O - Outputs tab</div><div>? - Help</div><div className="text-fg-muted">Shortcuts ignored while typing in inputs.</div></div><div className="mt-4 text-right"><Button variant="outline" onClick={()=>setHelpOpen(false)}>Close</Button></div></div></div>)}
+      {helpOpen && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={()=>setHelpOpen(false)}><div className="w-full max-w-2xl bg-surface-raised border border-border-strong rounded-xl p-5 text-fg" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between mb-3"><div className="text-xl font-bold font-display">Keyboard shortcuts</div><button onClick={()=>setHelpOpen(false)} className="p-1.5 rounded-[10px] text-fg-muted hover:text-fg hover:bg-surface-alt focus:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label="Close"><X className="w-5 h-5" /></button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-fg"><div>Q / W - +1 Team A / B</div><div>Z - Undo last</div><div>A / K / B - Ace / Kill / Block (score tab)</div><div>1-6 - Select player P1-P6 (score tab)</div><div>E - End set</div><div>F1/F2 or !/@ - Timeout A/B</div><div>1-7 - Load graphic to Preview (graphics tab)</div><div>Enter - TAKE Preview to Program</div><div>Esc - CLEAR Program (restore scorebug)</div><div>O - Outputs tab</div><div>? - Help</div><div className="text-fg-muted">Shortcuts ignored while typing in inputs. -1 is a manual correction; use Undo if needed.</div></div><div className="mt-4 text-right"><Button variant="outline" onClick={()=>setHelpOpen(false)}>Close</Button></div></div></div>)}
 
       <Modal isOpen={!!confirm} onClose={()=>setConfirm(null)} title="Confirm"><div className="space-y-3"><div className="text-sm text-fg">{confirm?.label}</div><div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setConfirm(null)}>Cancel</Button><Button variant="danger" onClick={async ()=>{ if (confirm?.type==='finish') { try { await send({ kind:'status', key:'status', status:'FINISHED', clientEventId: uuid() }); } catch {} } setConfirm(null); }}>Confirm</Button></div></div></Modal>
 
@@ -1303,8 +1596,12 @@ export const LiveControlPage: React.FC = () => {
           <div className="border-t border-border pt-2">
             <div className="font-semibold mb-1">Keyboard map</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-fg-muted">
-              <div>Q/W: +1 Team A/B</div><div>Z: Undo last</div><div>E: End set (when legal)</div><div>F1/F2 or !/@: Timeout A/B</div><div>1-7: Load graphic</div><div>Enter: TAKE</div><div>Esc: CLEAR</div><div>O: Outputs</div><div>?: Help</div>
+              <div>Q/W: +1 Team A/B</div><div>Z: Undo last</div><div>A/K/B: Ace/Kill/Block (score tab)</div><div>1-6: Select player P1-P6 (score tab)</div><div>E: End set (when legal)</div><div>F1/F2 or !/@: Timeout A/B</div><div>1-7: Load graphic (graphics tab)</div><div>Enter: TAKE</div><div>Esc: CLEAR</div><div>O: Outputs</div><div>?: Help</div>
             </div>
+          </div>
+          <div className="border-t border-border pt-2 text-fg-muted">
+            <div className="font-semibold mb-1 text-fg">Scoring corrections</div>
+            <div>-1 is a manual correction: removes one point from the selected team in the current set. It never goes below 0 and is blocked once the set is complete or pending end (use Undo end of set instead). If the last scoring event overall belongs to that team, -1 acts as a true undo of it; otherwise it records a score correction without changing rotation. Every -1 is logged.</div>
           </div>
           <div className="flex justify-end"><Button variant="outline" onClick={() => setHelpDrawerOpen(false)}>Close</Button></div>
         </div>

@@ -5,12 +5,13 @@ import { broadcastRouter } from './broadcast.routes.js';
 import { authRouter } from './auth.routes.js';
 import { teamsRouter } from './teams.routes.js';
 import { playersRouter } from './players.routes.js';
-import { competitionsRouter } from './competitions.routes.js';
+import { competitionsRouter, publicCompetitionsRouter } from './competitions.routes.js';
 import { tournamentsRouter } from './tournaments.routes.js';
 import { uploadsRouter } from './uploads.routes.js';
 import { systemRouter } from './system.routes.js';
 import { courtRouter } from './court.routes.js';
 import { scorebugThemeRouter } from './scorebugTheme.routes.js';
+import { leaderboardRouter, publicLeaderboardRouter } from './leaderboard.routes.js';
 
 export const apiRouter = Router();
 
@@ -25,6 +26,9 @@ apiRouter.use('/v1/system/courts', courtRouter);
 apiRouter.use('/v1/teams', teamsRouter);
 apiRouter.use('/v1/players', playersRouter);
 apiRouter.use('/v1/competitions', competitionsRouter);
+apiRouter.use('/v1/public/competitions', publicCompetitionsRouter);
+apiRouter.use('/v1/leaderboards', leaderboardRouter);
+apiRouter.use('/v1/public/leaderboards', publicLeaderboardRouter);
 apiRouter.use('/v1/tournaments', tournamentsRouter);
 apiRouter.use('/v1/uploads', uploadsRouter);
 

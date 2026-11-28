@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { SOCKET_EVENTS, MatchState } from '@qwesie/shared';
+import { SOCKET_EVENTS, MatchState, MatchStatePatch, applyMatchStatePatch } from '@qwesie/shared';
 import { matchApi, broadcastApi } from '../services/api.js';
 
 type SceneState = any;
@@ -118,6 +118,24 @@ export function useOutputStream(opts: { matchId?: string; court?: string; debug?
     socket.on(SOCKET_EVENTS.HEARTBEAT as any, () => { if (!cancelled) { heartbeatRef.current = Date.now(); setLastHeartbeatAt(Date.now()); } });
     socket.on(SOCKET_EVENTS.MATCH_SNAPSHOT as any, (s: MatchState) => { if (!cancelled && (!activeMatchId || s.id === activeMatchId)) applyMatch(s); });
     socket.on(SOCKET_EVENTS.MATCH_STATE as any, (s: MatchState) => { if (!cancelled && (!activeMatchId || s.id === activeMatchId)) applyMatch(s); });
+    socket.on(SOCKET_EVENTS.MATCH_STATE_PATCH as any, (patch: MatchStatePatch) => {
+      if (cancelled || !patch?.id) return;
+      if (activeMatchId && patch.id !== activeMatchId) return;
+      const nextRev = patch.revision ?? 0;
+      if (revRef.current > nextRev) return;
+      revRef.current = Math.max(revRef.current, nextRev);
+      const receivedAt = Date.now();
+      setMatch((prev) => (prev ? applyMatchStatePatch(prev, { ...patch, perf: { ...(patch.perf || {}), receivedAt: new Date(receivedAt).toISOString() } as any }) : prev));
+      setLastGoodAt(receivedAt);
+      try {
+        const committed = patch.perf?.committedAt ? new Date(patch.perf.committedAt).getTime() : NaN;
+        if (Number.isFinite(committed)) {
+          const ms = receivedAt - committed;
+          (window as any).__qwesieLastPatchLatencyMs = ms;
+          performance?.mark?.('qwesie:obs:patch-applied');
+        }
+      } catch {}
+    });
     socket.on(SOCKET_EVENTS.OUTPUT_SCENE_STATE as any, (s: any) => {
       if (cancelled) return;
       if (s?.matchId && activeMatchId && s.matchId !== activeMatchId) return;

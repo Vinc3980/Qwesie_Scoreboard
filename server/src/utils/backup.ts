@@ -141,7 +141,11 @@ export async function pruneBackups(dir = resolveBackupDir()) {
 }
 
 export function startBackupScheduler() {
-  const intervalMs = Math.max(1, Number(env.BACKUP_INTERVAL_MINUTES || 5)) * 60 * 1000;
+  if (!env.BACKUP_ENABLED) {
+    visibleBackupLog('info', 'Local backup scheduler disabled (BACKUP_ENABLED=false). Use Neon branching / point-in-time restore for hosted databases.');
+    return;
+  }
+  const intervalMs = Math.max(1, Number(env.BACKUP_INTERVAL_MINUTES || 60)) * 60 * 1000;
   if (env.BACKUP_ON_START) {
     void runBackup('startup');
   }

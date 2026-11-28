@@ -7,6 +7,10 @@ export type RosterRow = {
   isCaptain: boolean;
   isLibero: boolean;
   included: boolean;
+  photoUrl?: string | null;
+  thumbUrl?: string | null;
+  photoKey?: string | null;
+  thumbKey?: string | null;
 };
 
 export const POSITIONS = ['OH', 'MB', 'S', 'OPP', 'L', 'DS'];
@@ -20,6 +24,10 @@ export const emptyRow = (): RosterRow => ({
   isCaptain: false,
   isLibero: false,
   included: true,
+  photoUrl: null,
+  thumbUrl: null,
+  photoKey: null,
+  thumbKey: null,
 });
 
 export function hasRowContent(r: RosterRow) {
@@ -55,19 +63,28 @@ export function mapTeamPlayerToRow(p: any): RosterRow {
     isCaptain: !!p?.isCaptain,
     isLibero: !!p?.isLibero,
     included: true,
+    photoUrl: p?.photoUrl || null,
+    thumbUrl: p?.thumbUrl || p?.photoUrl || null,
+    photoKey: p?.photoKey || null,
+    thumbKey: p?.thumbKey || null,
   };
 }
 
 export function mapSavedRosterToRow(r: any): RosterRow {
+  const p = r?.player || r;
   return {
     _key: r?.playerId || Math.random().toString(36).slice(2),
     playerId: r?.playerId || undefined,
     jerseyNumber: r?.jerseyNumber === null || r?.jerseyNumber === undefined ? '' : String(r.jerseyNumber),
-    name: r?.name || '',
-    position: r?.position || '',
+    name: r?.name || p?.displayName || `${p?.firstName || ''} ${p?.lastName || ''}`.trim() || '',
+    position: r?.position || p?.position || '',
     isCaptain: !!r?.isCaptain,
     isLibero: !!r?.isLibero,
     included: true,
+    photoUrl: r?.photoUrl || p?.photoUrl || null,
+    thumbUrl: r?.thumbUrl || p?.thumbUrl || r?.photoUrl || p?.photoUrl || null,
+    photoKey: r?.photoKey || p?.photoKey || null,
+    thumbKey: r?.thumbKey || p?.thumbKey || null,
   };
 }
 

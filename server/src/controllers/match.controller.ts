@@ -75,8 +75,8 @@ export class MatchController {
   static async action(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const matchId = req.params.id || await MatchService.getCurrentMatch();
-      const { team, action, playerId, clientEventId } = req.body;
-      const state = await MatchService.recordAction(matchId, team, action, { playerId, clientEventId, actorUserId: req.user?.id });
+      const { team, action, playerId, assistPlayerId, clientEventId } = req.body;
+      const state = await MatchService.recordAction(matchId, team, action, { playerId, assistPlayerId, clientEventId, actorUserId: req.user?.id });
       sendState(res, state, `Action ${action} recorded`);
     } catch (error) {
       next(error);
@@ -109,6 +109,16 @@ export class MatchController {
       const matchId = req.params.id || await MatchService.getCurrentMatch();
       const state = await MatchService.undoLastEvent(matchId, { clientEventId: req.body?.clientEventId, actorUserId: req.user?.id });
       sendState(res, state, 'Last event undone');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async attributeEvent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const matchId = req.params.id || await MatchService.getCurrentMatch();
+      const state = await MatchService.attributeEvent(matchId, req.params.eventId, req.body || {}, req.user?.id);
+      sendState(res, state, 'Event attribution updated');
     } catch (error) {
       next(error);
     }
@@ -168,6 +178,15 @@ export class MatchController {
   static async getReadiness(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const data = await MatchService.getReadiness(req.params.id);
+      sendState(res, data);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getTeamSheet(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const data = await MatchService.getTeamSheet(req.params.id);
       sendState(res, data);
     } catch (error) {
       next(error);

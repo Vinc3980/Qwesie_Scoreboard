@@ -184,3 +184,70 @@ describe('Comparison service', () => {
     expect(errors.higherIsBetter).toBe(false);
   });
 });
+
+describe('Player attribution credit / undo / reattribution', () => {
+  it('credits player kills, aces, blocks, errors and points from attributed events', () => {
+    const events: RecordedEvent[] = [
+      ev(1, 'ACTION_RECORDED', 'HOME', { action: 'KILL', playerId: 'p1' }),
+      ev(2, 'POINT_AWARDED', 'HOME', { playerId: 'p1' }),
+      ev(3, 'ACTION_RECORDED', 'HOME', { action: 'ACE', playerId: 'p2' }),
+      ev(4, 'POINT_AWARDED', 'HOME', { playerId: 'p2' }),
+      ev(5, 'ACTION_RECORDED', 'HOME', { action: 'BLOCK', playerId: 'p3' }),
+      ev(6, 'POINT_AWARDED', 'HOME', { playerId: 'p3' }),
+      ev(7, 'ACTION_RECORDED', 'HOME', { action: 'ATTACK_ERROR', playerId: 'p4' }),
+      ev(8, 'POINT_AWARDED', 'AWAY', {}),
+    ];
+    const stats = computeScopeStats(events, sets);
+    const byId = Object.fromEntries(stats.players.HOME.map(p => [p.playerId, p]));
+    expect(byId.p1.attackKills).toBe(1);
+    expect(byId.p1.points).toBe(1);
+    expect(byId.p2.serviceAces).toBe(1);
+    expect(byId.p2.points).toBe(1);
+    expect(byId.p3.blocks).toBe(1);
+    expect(byId.p3.points).toBe(1);
+    expect(byId.p4.attackErrors).toBe(1);
+  });
+
+  it('credits assistPlayerId on KILL', () => {
+    const events: RecordedEvent[] = [
+      ev(1, 'ACTION_RECORDED', 'HOME', { action: 'KILL', playerId: 'p1', assistPlayerId: 'p2' }),
+      ev(2, 'POINT_AWARDED', 'HOME', { playerId: 'p1' }),
+    ];
+    const stats = computeScopeStats(events, sets);
+    const byId = Object.fromEntries(stats.players.HOME.map(p => [p.playerId, p]));
+    expect(byId.p1.attackKills).toBe(1);
+    expect(byId.p2.assists).toBe(1);
+  });
+
+  it('reversals/undo remove credited stats when recomputed from event stream', () => {
+    const events: RecordedEvent[] = [
+      ev(1, 'ACTION_RECORDED', 'HOME', { action: 'KILL', playerId: 'p1' }),
+      ev(2, 'POINT_AWARDED', 'HOME', { playerId: 'p1' }),
+      ev(3, 'REVERSAL', 'HOME', {}, { isReversal: true, correctsEventId: 'e2' }),
+      ev(4, 'REVERSAL', 'HOME', {}, { isReversal: true, correctsEventId: 'e1' }),
+    ];
+    const stats = computeScopeStats(events, sets);
+    const p1 = stats.players.HOME.find(p => p.playerId === 'p1');
+    expect(p1?.attackKills || 0).toBe(0);
+    expect(p1?.points || 0).toBe(0);
+    expect(stats.teams.HOME.totalPoints).toBe(0);
+  });
+
+  it('reattribution changes credit when event payload playerId is updated', () => {
+    const base: RecordedEvent[] = [
+      ev(1, 'ACTION_RECORDED', 'HOME', { action: 'ACE', playerId: 'p1' }),
+      ev(2, 'POINT_AWARDED', 'HOME', { playerId: 'p1' }),
+    ];
+    const before = computeScopeStats(base, sets);
+    expect(before.players.HOME.find(p => p.playerId === 'p1')?.serviceAces || 0).toBe(1);
+
+    const reattributed: RecordedEvent[] = [
+      ev(1, 'ACTION_RECORDED', 'HOME', { action: 'ACE', playerId: 'p2' }),
+      ev(2, 'POINT_AWARDED', 'HOME', { playerId: 'p2' }),
+    ];
+    const after = computeScopeStats(reattributed, sets);
+    expect(after.players.HOME.find(p => p.playerId === 'p1')?.serviceAces || 0).toBe(0);
+    expect(after.players.HOME.find(p => p.playerId === 'p2')?.serviceAces || 0).toBe(1);
+    expect(after.players.HOME.find(p => p.playerId === 'p2')?.points || 0).toBe(1);
+  });
+});

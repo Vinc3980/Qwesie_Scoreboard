@@ -30,6 +30,9 @@ export interface PlayerOnCourt {
   position?: string | null;
   isCaptain?: boolean;
   isLibero?: boolean;
+  photoUrl?: string | null;
+  thumbUrl?: string | null;
+  heightCm?: number | null;
   /** Per-match player stats (points, kill, ace, block, dig, …) for graphics/MVP. */
   stats?: Record<string, number>;
 }
@@ -42,6 +45,11 @@ export interface TeamMatchState {
   primaryColor?: string | null;
   secondaryColor?: string | null;
   textColor?: string | null;
+  coachName?: string | null;
+  coachPhotoUrl?: string | null;
+  assistantCoachName?: string | null;
+  managerName?: string | null;
+  teamPhotoUrl?: string | null;
   score: number;
   sets: number;
   timeouts: number; // remaining
@@ -115,11 +123,14 @@ export interface MatchState {
   referee2: string;
   started_at: string;
   ended_at: string | null;
+  createdAt?: string | null;
   server_time: string;
   events: MatchEventData[];
   flags: MatchFlags;
   revision: number;
   lastEvent: MatchEventData | null;
+  /** Server-side timing metadata (optional; used by perf measurements). */
+  perf?: MatchStatePerf | null;
   rules: {
     bestOfSets: number;
     setsToWin: number;
@@ -130,6 +141,62 @@ export interface MatchState {
     timeoutsPerSet: number;
     substitutionsPerSet: number;
     confirmSetEnd: boolean;
+  };
+}
+
+export interface MatchStatePerf {
+  committedAt?: string;
+  builtAt?: string;
+  emittedAt?: string;
+  receivedAt?: string;
+  optimisticAt?: string;
+  source?: 'cache' | 'db' | 'patch';
+  durationMs?: number;
+}
+
+/**
+ * Compact delta emitted after a scoring write. It contains only what a console
+ * or OBS overlay needs to render the new score immediately; a debounced full
+ * state follows so stats/events/lineups converge.
+ */
+export interface MatchStatePatch {
+  id: string;
+  revision: number;
+  server_time: string;
+  status?: MatchStatus;
+  current_set?: number;
+  server?: TeamId;
+  teams?: {
+    A?: Partial<TeamMatchState>;
+    B?: Partial<TeamMatchState>;
+  };
+  set_scores?: { A: number[]; B: number[] };
+  setHistory?: SetHistoryItem[];
+  flags?: MatchFlags;
+  lastEvent?: MatchEventData | null;
+  perf?: MatchStatePerf | null;
+}
+
+/** Applies a compact patch to an existing full state without losing lineups. */
+export function applyMatchStatePatch(state: MatchState, patch: MatchStatePatch): MatchState {
+  if (!state || !patch || patch.id !== state.id) return state;
+  if (Number(patch.revision || 0) < Number(state.revision || 0)) return state;
+  return {
+    ...state,
+    status: patch.status ?? state.status,
+    current_set: patch.current_set ?? state.current_set,
+    server: patch.server ?? state.server,
+    teams: {
+      A: patch.teams?.A ? { ...state.teams.A, ...patch.teams.A } : state.teams.A,
+      B: patch.teams?.B ? { ...state.teams.B, ...patch.teams.B } : state.teams.B,
+    },
+    set_scores: patch.set_scores ?? state.set_scores,
+    setHistory: patch.setHistory ?? state.setHistory,
+    flags: patch.flags ?? state.flags,
+    lastEvent: patch.lastEvent !== undefined ? patch.lastEvent : state.lastEvent,
+    revision: patch.revision,
+    server_time: patch.server_time,
+    perf: patch.perf ?? state.perf,
   };
 }
 
@@ -253,6 +320,8 @@ export interface OutputSceneState {
     /** Mid-match stats after set N (0/undefined disables). */
     midMatchAfterSet?: number | null;
     midMatchSeconds?: number;
+    /** Show player attribution on air: off, auto, or one-click. */
+    attributionOnAir?: 'off' | 'auto' | 'one-click';
   };
   version: number;
   revision: number;

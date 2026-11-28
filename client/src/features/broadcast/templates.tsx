@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { COURT_LAYOUT_BY_POS, sanitizeLeaderboardThemeConfig, defaultLeaderboardThemeConfig } from '@qwesie/shared';
 import { TeamLogo } from '../../components/broadcast/TeamLogo.js';
 
 type AnyMatch = any;
@@ -426,7 +427,7 @@ export const PlayerSpotlightScene: React.FC<{ match: AnyMatch }> = ({ match }) =
       <div style={{ flex: 1, padding: 28, display: 'grid', gridTemplateColumns: '520px 1fr', gap: 28 }}>
         <Fade delay={0.06}>
           <div style={{ height: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {player.photo ? <img src={player.photo} alt="" style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', background: '#111827' }} /> : <div style={{ width: '100%', aspectRatio: '3/4', background: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.08)' }} />}
+            {player.photo ? <img src={player.photo} alt="" loading="lazy" decoding="async" style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', background: '#111827' }} /> : <div style={{ width: '100%', aspectRatio: '3/4', background: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.08)' }} />}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {player.jersey != null ? <div style={{ minWidth: 64, height: 64, background: color, color: tcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, fontWeight: 800 }} className="tabular-score">{player.jersey}</div> : null}
               <div>
@@ -848,7 +849,7 @@ export const PlayerSpotlightTemplateScene: React.FC<{ match: AnyMatch; scene?: A
       <div style={{ flex: 1, padding: 28, display: 'grid', gridTemplateColumns: '520px 1fr', gap: 28 }}>
         <Fade delay={0.06}>
           <div style={{ height: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {resolved.photo ? <img src={resolved.photo} alt="" style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', background: '#111827' }} /> : <div style={{ width: '100%', aspectRatio: '3/4', background: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.08)' }} />}
+            {resolved.photo ? <img src={resolved.photo} alt="" loading="lazy" decoding="async" style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', background: '#111827' }} /> : <div style={{ width: '100%', aspectRatio: '3/4', background: 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.08)' }} />}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {resolved.jersey != null ? <div style={{ minWidth: 64, height: 64, background: color, color: tcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, fontWeight: 800 }} className="tabular-score">{resolved.jersey}</div> : null}
               <div>
@@ -869,6 +870,401 @@ export const PlayerSpotlightTemplateScene: React.FC<{ match: AnyMatch; scene?: A
   );
 };
 
+export const PlayerActionLowerThird: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload ?? scene?.payload ?? {};
+  const side = p.team === 'A' || p.team === 'B' ? p.team : (p.side === 'A' || p.side === 'B' ? p.side : null);
+  const team = side ? match?.teams?.[side] : null;
+  const name = asText(p.playerName) || asText(p.name) || 'Player';
+  const jersey = p.jerseyNumber ?? p.jersey ?? null;
+  const photo = asText(p.photoUrl || p.thumbUrl || p.photo);
+  const action = String(p.action || p.label || 'POINT').toUpperCase();
+  const actionLabel = ({ KILL: 'KILL', ACE: 'ACE', BLOCK: 'BLOCK', ATTACK_ERROR: 'OPP ERROR', POINT: 'POINT' } as any)[action] || action.replace(/_/g, ' ');
+  const aScore = num(match?.teams?.A?.score);
+  const bScore = num(match?.teams?.B?.score);
+  const aSets = num(match?.teams?.A?.sets);
+  const bSets = num(match?.teams?.B?.sets);
+  const color = side === 'A' ? 'var(--team-a)' : side === 'B' ? 'var(--team-b)' : '#f59e0b';
+  const tcolor = side === 'A' ? 'var(--team-a-text)' : side === 'B' ? 'var(--team-b-text)' : '#111827';
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: '"Barlow Condensed", Inter, sans-serif' }}>
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 30 }}
+        transition={{ duration: 0.28, ease: EASE }}
+        style={{ position: 'absolute', left: 96, right: 96, bottom: 72, display: 'flex', justifyContent: 'center' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'stretch', background: 'rgba(8,12,20,0.94)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.45)', minWidth: 760, maxWidth: 1320 }}>
+          <div style={{ width: 10, background: color }} />
+          {photo ? <img src={photo} alt="" style={{ width: 112, height: 112, objectFit: 'cover', background: '#111827' }} /> : <div style={{ width: 112, height: 112, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 42, fontWeight: 800, color }}>{jersey != null ? `#${jersey}` : '•'}</div>}
+          <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 24, color: '#9fb0c8', letterSpacing: '0.16em', textTransform: 'uppercase' }}>{asText(team?.shortName || team?.name) || side || ''} • {actionLabel}</div>
+            <div style={{ fontSize: 52, fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{jersey != null ? <span style={{ color }}>#{jersey} </span> : null}{name}</div>
+          </div>
+          <div style={{ padding: '14px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', borderLeft: '1px solid rgba(255,255,255,0.1)', minWidth: 220 }}>
+            <div style={{ fontSize: 22, color: '#9fb0c8', letterSpacing: '0.14em' }}>MATCH</div>
+            <div style={{ fontSize: 54, fontWeight: 800, lineHeight: 1 }} className="tabular-score"><span style={{ color: 'var(--team-a)' }}>{aScore}</span><span style={{ color: '#6b778c' }}>-</span><span style={{ color: 'var(--team-b)' }}>{bScore}</span></div>
+            <div style={{ fontSize: 22, color: '#9fb0c8' }}>SETS {aSets}-{bSets}</div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+function teamRoster(match: AnyMatch, side: 'A' | 'B') {
+  const t = match?.teams?.[side] || {};
+  const lineup = Array.isArray(t.lineup) ? t.lineup : [];
+  const bench = Array.isArray(t.bench) ? t.bench : [];
+  const seen = new Set<string>();
+  return [...lineup, ...bench].filter((p: any) => p && (p.id || p.name || p.jerseyNumber != null)).filter((p: any) => {
+    const k = String(p.id || `${p.jerseyNumber}-${p.name}`);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+const FallbackAvatar: React.FC<{ name?: string | null; size: number; color?: string; textColor?: string; photo?: string | null; style?: React.CSSProperties }> = ({ name, size, color = 'rgba(255,255,255,0.08)', textColor = '#fff', photo, style }) => {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [photo]);
+  const initials = (String(name || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(s => s[0]?.toUpperCase()).join('')) || '?';
+  if (photo && !broken) return <img src={photo} alt="" loading="eager" decoding="async" onError={() => setBroken(true)} style={{ width: size, height: size, objectFit: 'cover', background: '#111827', ...style }} />;
+  return <div style={{ width: size, height: size, background: color, color: textColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.34), fontWeight: 800, ...style }}>{initials}</div>;
+};
+
+export const MatchIntroTeams: React.FC<{ match: AnyMatch; scene?: AnyScene }> = ({ match }) => {
+  const tA = match?.teams?.A || {}; const tB = match?.teams?.B || {};
+  const when = asText(match?.scheduledAt || match?.match_date || match?.started_at);
+  const court = asText(match?.court);
+  const comp = [asText(match?.tournament), asText(match?.division)].filter(Boolean).join(' • ');
+  const side = (sideKey: 'A' | 'B', align: 'left' | 'right', delay: number) => {
+    const t = sideKey === 'A' ? tA : tB;
+    const color = sideKey === 'A' ? 'var(--team-a)' : 'var(--team-b)';
+    const tcolor = sideKey === 'A' ? 'var(--team-a-text)' : 'var(--team-b-text)';
+    const right = align === 'right';
+    return (
+      <Fade delay={delay}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, alignItems: right ? 'flex-end' : 'flex-start', textAlign: right ? 'right' : 'left' }}>
+          <TeamLogo src={asText(t.logoUrl)} name={asText(t.name) || sideKey} shortName={asText(t.shortName) || sideKey} color={color} textColor={tcolor} size={140} />
+          <div style={{ fontSize: 72, fontWeight: 800, lineHeight: 0.95, textTransform: 'uppercase', maxWidth: 620 }}>{asText(t.name) || sideKey}</div>
+          {asText(t.coachName) ? <div style={{ fontSize: 32, color: '#d6deea' }}><span style={{ color: 'var(--broadcast-muted)', letterSpacing: '0.12em' }}>COACH </span>{asText(t.coachName)}</div> : null}
+        </div>
+      </Fade>
+    );
+  };
+  return (
+    <SceneShell>
+      <HeaderBand match={match} title="Match Introduction" subtitle={comp || null} />
+      <div style={{ flex: 1, padding: 36, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 28 }}>
+        {side('A', 'left', 0.06)}
+        <Fade delay={0.1}><div style={{ textAlign: 'center', padding: '24px 28px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ fontSize: 84, fontWeight: 800, lineHeight: 1 }}>VS</div>
+          {court ? <div style={{ fontSize: 28, color: '#d6deea', marginTop: 8 }}>{court}</div> : null}
+          {when ? <div style={{ fontSize: 24, color: 'var(--broadcast-muted)', marginTop: 4 }}>{new Date(when).toLocaleString()}</div> : null}
+        </div></Fade>
+        {side('B', 'right', 0.14)}
+      </div>
+    </SceneShell>
+  );
+};
+
+export const TeamSquadProfiles: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const side = (p.team === 'B' ? 'B' : 'A') as 'A' | 'B';
+  const team = match?.teams?.[side] || {};
+  const roster = teamRoster(match, side);
+  const pageSize = Math.max(1, Math.min(3, Number(p.pageSize) || 3));
+  const page = Math.max(0, Number(p.page) || 0);
+  const totalPages = Math.max(1, Math.ceil(roster.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const slice = roster.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const color = side === 'A' ? 'var(--team-a)' : 'var(--team-b)';
+  const tcolor = side === 'A' ? 'var(--team-a-text)' : 'var(--team-b-text)';
+  return (
+    <SceneShell>
+      <HeaderBand match={match} title={`${asText(team.shortName) || asText(team.name) || side} Squad`} subtitle={`Page ${safePage + 1} / ${totalPages}`} />
+      <div style={{ flex: 1, padding: 28, display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, slice.length)}, 1fr)`, gap: 20 }}>
+        {slice.map((pl: any, i: number) => (
+          <Fade key={pl.id || i} delay={0.06 + i * 0.08}>
+            <div style={{ height: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <FallbackAvatar photo={asText(pl.thumbUrl || pl.photoUrl)} name={asText(pl.name)} size={360} style={{ width: '100%', height: 420, fontSize: 96 }} color="rgba(255,255,255,0.06)" />
+              <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ minWidth: 52, height: 52, background: color, color: tcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 800 }}>{pl.jerseyNumber ?? '-'}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asText(pl.name) || 'Player'}</div>
+                    <div style={{ fontSize: 24, color: 'var(--broadcast-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{asText(pl.position) || '—'}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 22, color: '#d6deea' }}>
+                  {pl.isCaptain ? <span style={{ padding: '2px 8px', border: '1px solid rgba(255,209,102,0.5)', color: '#ffd166' }}>CAPTAIN</span> : null}
+                  {pl.isLibero ? <span style={{ padding: '2px 8px', border: '1px solid rgba(96,165,250,0.5)', color: '#93c5fd' }}>LIBERO</span> : null}
+                  {pl.heightCm ? <span>{pl.heightCm} cm</span> : null}
+                </div>
+              </div>
+            </div>
+          </Fade>
+        ))}
+        {!slice.length ? <div style={{ fontSize: 34, color: 'var(--broadcast-muted)' }}>No roster data available.</div> : null}
+      </div>
+    </SceneShell>
+  );
+};
+
+export const TeamRosterGrid: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const side = (p.team === 'B' ? 'B' : 'A') as 'A' | 'B';
+  const team = match?.teams?.[side] || {};
+  const roster = teamRoster(match, side);
+  const color = side === 'A' ? 'var(--team-a)' : 'var(--team-b)';
+  const tcolor = side === 'A' ? 'var(--team-a-text)' : 'var(--team-b-text)';
+  return (
+    <SceneShell>
+      <HeaderBand match={match} title={`${asText(team.shortName) || asText(team.name) || side} Roster`} subtitle={asText(team.coachName) ? `Coach: ${asText(team.coachName)}` : null} />
+      <div style={{ flex: 1, padding: 24, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignContent: 'start' }}>
+        {roster.map((pl: any, i: number) => (
+          <Fade key={pl.id || i} delay={0.03 + i * 0.02}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <FallbackAvatar photo={asText(pl.thumbUrl || pl.photoUrl)} name={asText(pl.name)} size={52} style={{ borderRadius: 6 }} />
+              <div style={{ minWidth: 46, height: 46, background: color, color: tcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 800 }}>{pl.jerseyNumber ?? '-'}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 30, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asText(pl.name) || 'Player'}</div>
+                <div style={{ fontSize: 20, color: 'var(--broadcast-muted)', textTransform: 'uppercase' }}>{[asText(pl.position), pl.isCaptain ? 'Captain' : null, pl.isLibero ? 'Libero' : null].filter(Boolean).join(' • ')}</div>
+              </div>
+            </div>
+          </Fade>
+        ))}
+        {!roster.length ? <div style={{ fontSize: 30, color: 'var(--broadcast-muted)' }}>No roster data available.</div> : null}
+      </div>
+    </SceneShell>
+  );
+};
+
+export const StartingSixCourt: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const side = (p.team === 'B' ? 'B' : 'A') as 'A' | 'B';
+  const team = match?.teams?.[side] || {};
+  const lineup = (Array.isArray(team.lineup) ? team.lineup : []).slice(0, 6);
+  const color = side === 'A' ? 'var(--team-a)' : 'var(--team-b)';
+  const tcolor = side === 'A' ? 'var(--team-a-text)' : 'var(--team-b-text)';
+  const slots = ([4,3,2,5,6,1] as const).map(pos => {
+    const loc = COURT_LAYOUT_BY_POS[pos];
+    const left = loc.gridCol === 1 ? 16.66 : loc.gridCol === 2 ? 50 : 83.33;
+    const top = loc.gridRow === 1 ? 28 : 72;
+    return { pos, p: lineup[pos - 1], left, top };
+  });
+  return (
+    <SceneShell>
+      <HeaderBand match={match} title="Starting Six" subtitle={`${asText(team.name) || side}${p.setNumber ? ` • Set ${p.setNumber}` : ''}`} />
+      <div style={{ flex: 1, padding: 28, display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 24 }}>
+        <Fade delay={0.06}>
+          <div style={{ position: 'relative', width: '100%', aspectRatio: '1 / 1', maxHeight: 760, background: 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))', border: '2px solid rgba(255,255,255,0.2)' }}>
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 10, background: color }} />
+            <div style={{ position: 'absolute', left: 0, right: 0, top: '33.333%', height: 2, background: 'rgba(255,255,255,0.35)' }} />
+            {slots.map(({ pos, p: pl, left, top }) => (
+              <div key={pos} style={{ position: 'absolute', left: `${left}%`, top: `${top}%`, transform: 'translate(-50%,-50%)', width: 150, textAlign: 'center' }}>
+                <div style={{ margin: '0 auto', width: 92, height: 92, borderRadius: 18, overflow: 'hidden', border: `3px solid ${color}`, background: 'rgba(0,0,0,0.25)' }}>
+                  <FallbackAvatar photo={asText(pl?.thumbUrl || pl?.photoUrl)} name={asText(pl?.name)} size={92} style={{ borderRadius: 14 }} />
+                </div>
+                <div style={{ marginTop: 6, fontSize: 28, fontWeight: 800, color }}>{pl?.jerseyNumber ?? '-'}</div>
+                <div style={{ fontSize: 20, color: '#e5e7eb', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asText(pl?.name) || `P${pos}`}</div>
+                <div style={{ fontSize: 16, color: 'var(--broadcast-muted)' }}>P{pos}</div>
+              </div>
+            ))}
+          </div>
+        </Fade>
+        <div style={{ display: 'grid', gap: 8, alignContent: 'start' }}>
+          {lineup.map((pl: any, i: number) => <Fade key={pl?.id || i} delay={0.08 + i * 0.04}><div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}><div style={{ minWidth: 44, height: 44, background: color, color: tcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 24 }}>{pl?.jerseyNumber ?? '-'}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 28, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asText(pl?.name) || `Player ${i+1}`}</div><div style={{ fontSize: 20, color: 'var(--broadcast-muted)' }}>P{i+1}{pl?.isLibero ? ' • Libero' : ''}{pl?.isCaptain ? ' • Captain' : ''}</div></div></div></Fade>)}
+        </div>
+      </div>
+    </SceneShell>
+  );
+};
+
+export const LeaderboardGraphic: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const competitionId = p.competitionId || (match as any)?.competitionId;
+  const [data, setData] = useState<any>(null);
+  const [theme, setTheme] = useState(() => sanitizeLeaderboardThemeConfig(p.leaderboardTheme || p.themeConfig || undefined));
+  useEffect(() => { setTheme(sanitizeLeaderboardThemeConfig(p.leaderboardTheme || p.themeConfig || undefined)); }, [JSON.stringify(p.leaderboardTheme || p.themeConfig || null)]);
+  useEffect(() => {
+    if (p.leaderboardTheme || p.themeConfig) return;
+    if (p.themeId) {
+      let alive = true;
+      fetch('/api/v1/public/leaderboards/themes/' + encodeURIComponent(p.themeId)).then(r=>r.json()).then(r=>{ if(alive && r?.data?.config) setTheme(sanitizeLeaderboardThemeConfig(r.data.config)); }).catch(()=>{});
+      return () => { alive = false; };
+    }
+    if (competitionId) {
+      let alive = true;
+      fetch('/api/v1/public/leaderboards/themes/resolve?competitionId=' + encodeURIComponent(competitionId)).then(r=>r.json()).then(r=>{ if(alive && r?.data?.config) setTheme(sanitizeLeaderboardThemeConfig(r.data.config)); }).catch(()=>{});
+      return () => { alive = false; };
+    }
+  }, [p.themeId, p.leaderboardTheme, p.themeConfig, competitionId]);
+  useEffect(() => {
+    if (!competitionId) return;
+    let alive = true;
+    fetch('/api/v1/public/competitions/' + encodeURIComponent(competitionId) + '/standings?division=' + encodeURIComponent(p.division || '')).then(r => r.json()).then(r => { if (alive) setData(r.data); }).catch(() => {});
+    return () => { alive = false; };
+  }, [competitionId, p.division]);
+  const allRows = data?.rows || [];
+  const cfgCols = (theme.columns?.length ? theme.columns : ['played','won','lost','matchPoints']).slice(0, 8);
+  const fitAll = p.fitAll ?? theme.layout.fitAll;
+  const limit = fitAll ? Math.min(20, allRows.length || 20) : Math.max(4, Math.min(20, p.limit || theme.layout.rowsPerPage || 10));
+  const rows = allRows.slice(0, limit);
+  const rowH = theme.layout.rowHeight || 56;
+  const gap = 8;
+  const available = 820;
+  const needed = rows.length * rowH + Math.max(0, rows.length - 1) * gap;
+  const fitScale = fitAll ? Math.max(0.35, Math.min(1, available / Math.max(1, needed))) : 1;
+  const colLabels: any = { played:'P', won:'W', lost:'L', setsFor:'SF', setsAgainst:'SA', setRatio:'SR', pointsFor:'PF', pointsAgainst:'PA', pointRatio:'PR', matchPoints:'Pts', form:'Form' };
+  const val = (r: any, k: string) => k === 'setRatio' ? (r.setRatio ?? 0).toFixed(2) : k === 'pointRatio' ? (r.pointRatio ?? 0).toFixed(2) : k === 'form' ? (r.form || []).slice(-5).join('') : (r[k] ?? '-');
+  const nameFor = (r: any) => theme.names.mode === 'short' ? (r.shortName || r.teamName) : theme.names.mode === 'code' ? (r.shortName || r.teamName || '').slice(0,3).toUpperCase() : r.teamName;
+  const zoneFor = (rank: number) => theme.zones.find(z => rank <= z.toRank);
+  const logoRadius = theme.logos.shape === 'circle' ? '999px' : theme.logos.shape === 'square' ? '4px' : '10px';
+  const gridCols = `56px ${theme.logos.show ? `${theme.logos.size}px ` : ''}1fr ${cfgCols.map(k => k === 'form' ? '100px' : '72px').join(' ')}`;
+  const title = p.title || theme.layout.title || 'LEADERBOARD';
+  const subtitle = p.subtitle ?? theme.layout.subtitle ?? (data?.competitionName ? data.competitionName + (p.division ? ' • ' + p.division : '') : null);
+  return (
+    <div style={{ width: 1920, height: 1080, background: theme.layout.backgroundMode === 'transparent' ? 'transparent' : theme.colors.background, color: theme.colors.text, fontFamily: theme.typography.fontFamily, position: 'relative', overflow: 'hidden' }}>
+      {theme.layout.backgroundMode === 'image' && theme.layout.backgroundImage && <img src={theme.layout.backgroundImage} alt="" style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', opacity:0.35 }} />}
+      <div style={{ position:'relative', zIndex:1, height:'100%', display:'flex', flexDirection:'column', padding: theme.layout.safeArea ? 48 : 24 }}>
+        {theme.layout.showTitle && <div style={{ display:'flex', justifyContent:'space-between', alignItems:'end', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: theme.typography.titleSize, fontWeight: 800, textTransform: theme.typography.uppercase ? 'uppercase' : 'none', letterSpacing: theme.typography.uppercase ? 2 : 0 }}>{title}</div>
+            {theme.layout.showSubtitle && subtitle && <div style={{ fontSize: Math.max(20, theme.typography.titleSize * 0.45), color: theme.colors.mutedText, marginTop: 4 }}>{subtitle}</div>}
+          </div>
+          {theme.layout.sponsorText && <div style={{ fontSize: 22, color: theme.colors.mutedText }}>{theme.layout.sponsorText}</div>}
+        </div>}
+        <div style={{ display:'grid', gridTemplateColumns: gridCols, gap: 12, padding: '10px 16px', background: theme.colors.headerBg, fontSize: theme.typography.headerSize, fontWeight: 700, color: theme.colors.mutedText, textTransform: 'uppercase' }}>
+          <div>#</div>{theme.logos.show && <div></div>}<div>Team</div>{cfgCols.map(c => <div key={c} style={{ textAlign: c==='form' ? 'left' : 'right' }}>{colLabels[c] || c}</div>)}
+        </div>
+        <div style={{ flex:1, overflow:'hidden', marginTop: 8 }}>
+          <div style={{ display:'grid', gap, alignContent:'start', transform:`scale(${fitScale})`, transformOrigin:'top left', width:`${100/fitScale}%` }}>
+            {rows.map((r: any, i: number) => {
+              const zone = zoneFor(r.rank);
+              const bg = zone?.color || (r.rank === 1 ? theme.colors.leaderHighlight : (i % 2 ? theme.colors.rowAltBg : theme.colors.rowBg));
+              return (
+                <Fade key={r.teamId || i} delay={theme.animation.enabled ? Math.min(0.6, i * (theme.animation.staggerMs/1000)) : 0}>
+                  <div style={{ display:'grid', gridTemplateColumns: gridCols, gap: 12, alignItems:'center', minHeight: rowH, padding: '8px 16px', background: bg, borderLeft: zone ? `4px solid ${theme.colors.accent}` : '4px solid transparent', fontSize: theme.typography.rowSize }}>
+                    <div style={{ fontWeight: 800, color: theme.colors.accent }}>{r.rank}</div>
+                    {theme.logos.show && <div style={{ width: theme.logos.size, height: theme.logos.size, borderRadius: logoRadius, overflow:'hidden', background:'rgba(255,255,255,0.08)' }}>{r.teamLogoUrl ? <img src={r.teamLogoUrl} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : null}</div>}
+                    <div style={{ fontWeight: 800, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nameFor(r)}</div>
+                    {cfgCols.map(c => <div key={c} style={{ textAlign: c==='form' ? 'left' : 'right', fontWeight: c==='matchPoints' ? 800 : 600, color: c==='matchPoints' ? theme.colors.accent : theme.colors.text }}>{String(val(r,c))}</div>)}
+                  </div>
+                </Fade>
+              );
+            })}
+            {!rows.length && <div style={{ fontSize: 32, color: theme.colors.mutedText, padding: 24 }}>No standings available.</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const FixturesGraphic: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const competitionId = p.competitionId || (match as any)?.competitionId;
+  const [data, setData] = useState<any>(null);
+  useEffect(() => {
+    if (!competitionId) return;
+    let alive = true;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const end = new Date(today); end.setDate(end.getDate()+1);
+    fetch('/api/v1/public/competitions/' + encodeURIComponent(competitionId) + '/fixtures?from=' + encodeURIComponent(today.toISOString()) + '&to=' + encodeURIComponent(end.toISOString())).then(r => r.json()).then(r => { if (alive) setData(r.data); }).catch(() => {});
+    return () => { alive = false; };
+  }, [competitionId]);
+  const items = (data?.items || []).slice(0, p.limit || 8);
+  return (
+    <SceneShell>
+      <HeaderBand match={match} title={p.title || "Today's Fixtures"} subtitle={null} />
+      <div style={{ flex: 1, padding: 28, display: 'grid', gap: 8, alignContent: 'start' }}>
+        {items.map((m: any, i: number) => (
+          <Fade key={m.id || i} delay={0.04 + i * 0.03}>
+            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 90px 1fr 120px', gap: 12, alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ fontSize: 24, color: '#9fb0c8' }}>{m.scheduledAt ? new Date(m.scheduledAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--:--'}</div>
+              <div style={{ fontSize: 32, fontWeight: 800, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.homeTeam?.shortName || m.homeTeamName}</div>
+              <div style={{ fontSize: 34, fontWeight: 800, textAlign: 'center', color: 'var(--broadcast-accent)' }}>{(m.status==='COMPLETED'||m.status==='LIVE') ? (m.setsWonHome + '-' + m.setsWonAway) : 'vs'}</div>
+              <div style={{ fontSize: 32, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.awayTeam?.shortName || m.awayTeamName}</div>
+              <div style={{ fontSize: 20, color: '#9fb0c8', textAlign: 'right' }}>{m.court || m.status}</div>
+            </div>
+          </Fade>
+        ))}
+        {!items.length && <div style={{ fontSize: 32, color: 'var(--broadcast-muted)' }}>No fixtures today.</div>}
+      </div>
+    </SceneShell>
+  );
+};
+
+export const PlayerLeadersGraphic: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const competitionId = p.competitionId || (match as any)?.competitionId;
+  const category = p.category || 'points';
+  const theme = sanitizeLeaderboardThemeConfig(p.leaderboardTheme || p.themeConfig || undefined);
+  const [data, setData] = useState<any>(null);
+  useEffect(() => { if (!competitionId) return; let alive=true; fetch('/api/v1/public/leaderboards/competition/' + encodeURIComponent(competitionId) + '/players?category=' + encodeURIComponent(category) + '&limit=' + encodeURIComponent(p.limit||20) + (p.division ? '&division='+encodeURIComponent(p.division):'')).then(r=>r.json()).then(r=>{ if(alive) setData(r.data); }).catch(()=>{}); return ()=>{alive=false}; }, [competitionId, category, p.division, p.limit]);
+  const allRows = data?.rows || [];
+  const fitAll = p.fitAll ?? theme.layout.fitAll;
+  const limit = fitAll ? Math.min(20, allRows.length || 20) : Math.max(4, Math.min(20, p.limit || theme.layout.rowsPerPage || 10));
+  const rows = allRows.slice(0, limit);
+  const rowH = Math.max(52, theme.layout.rowHeight);
+  const gap = 8; const needed = rows.length * rowH + Math.max(0, rows.length-1)*gap;
+  const fitScale = fitAll ? Math.max(0.35, Math.min(1, 820 / Math.max(1, needed))) : 1;
+  const label: any = { points:'Top Scorers', kills:'Top Killers', aces:'Top Aces', blocks:'Top Blockers', digs:'Top Digs', assists:'Top Assists', attackErrors:'Most Attack Errors', pointsPerSet:'Points / Set', killEfficiency:'Kill Efficiency' };
+  const logoRadius = theme.logos.shape === 'circle' ? '999px' : theme.logos.shape === 'square' ? '4px' : '10px';
+  return (
+    <div style={{ width:1920, height:1080, background: theme.layout.backgroundMode==='transparent' ? 'transparent' : theme.colors.background, color: theme.colors.text, fontFamily: theme.typography.fontFamily, overflow:'hidden' }}>
+      <div style={{ padding: theme.layout.safeArea ? 48 : 24, height:'100%', display:'flex', flexDirection:'column' }}>
+        <div style={{ fontSize: theme.typography.titleSize, fontWeight:800, marginBottom: 18 }}>{label[category] || 'Player Leaders'}{p.division ? <span style={{ fontSize: theme.typography.titleSize*0.45, color: theme.colors.mutedText, marginLeft: 16 }}>{p.division}</span> : null}</div>
+        <div style={{ flex:1, overflow:'hidden' }}>
+          <div style={{ display:'grid', gap, transform:`scale(${fitScale})`, transformOrigin:'top left', width:`${100/fitScale}%` }}>
+            {rows.map((r:any,i:number)=>(
+              <Fade key={r.playerId||i} delay={theme.animation.enabled ? Math.min(0.6, i*(theme.animation.staggerMs/1000)) : 0}>
+                <div style={{ display:'grid', gridTemplateColumns:`56px ${theme.logos.show?`${theme.logos.size}px`:''} ${theme.logos.show?`${theme.logos.size}px`:''} 1fr 1fr 110px`, gap:12, alignItems:'center', minHeight:rowH, padding:'8px 14px', background: i===0?theme.colors.leaderHighlight:(i%2?theme.colors.rowAltBg:theme.colors.rowBg) }}>
+                  <div style={{ fontSize: Math.max(20, theme.typography.rowSize), fontWeight:800, color: theme.colors.accent }}>{r.rank}</div>
+                  {theme.logos.show && <FallbackAvatar photo={r.photoUrl} name={r.name} size={theme.logos.size} style={{ borderRadius: logoRadius }} />}
+                  {theme.logos.show && <div style={{ width:theme.logos.size, height:theme.logos.size, borderRadius: logoRadius, overflow:'hidden', background:'rgba(255,255,255,0.08)' }}>{r.teamLogoUrl ? <img src={r.teamLogoUrl} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : null}</div>}
+                  <div style={{ fontSize: theme.typography.rowSize, fontWeight:800, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{r.name}</div>
+                  <div style={{ fontSize: Math.max(18, theme.typography.rowSize*0.75), color: theme.colors.mutedText, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{r.teamShortName||r.teamName}</div>
+                  <div style={{ fontSize: Math.max(22, theme.typography.rowSize), fontWeight:800, color: theme.colors.accent, textAlign:'right' }}>{Math.round((r.value||0)*100)/100}</div>
+                </div>
+              </Fade>
+            ))}
+            {!rows.length && <div style={{ fontSize:32, color: theme.colors.mutedText }}>No player data available.</div>}
+          </div>
+        </div>
+        {data?.coverage?.pct != null && <div style={{ fontSize:16, color: theme.colors.mutedText, marginTop: 8 }}>Data coverage: {data.coverage.pct}%</div>}
+      </div>
+    </div>
+  );
+};
+
+export const PlayerLeadersGridGraphic: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const competitionId = p.competitionId || (match as any)?.competitionId;
+  const cats: string[] = p.categories?.length ? p.categories : ['points','aces','blocks','kills'];
+  const [all, setAll] = useState<Record<string,any>>({});
+  useEffect(() => { if (!competitionId) return; let alive=true; Promise.all(cats.map(c=>fetch('/api/v1/public/leaderboards/competition/'+encodeURIComponent(competitionId)+'/players?category='+encodeURIComponent(c)+'&limit=5'+(p.division?'&division='+encodeURIComponent(p.division):'')).then(r=>r.json()).then(r=>[c,r.data]).catch(()=>[c,null]))).then(entries=>{ if(alive) setAll(Object.fromEntries(entries)); }); return ()=>{alive=false}; }, [competitionId, cats.join(','), p.division]);
+  const label: any = { points:'Top Scorers', kills:'Kills', aces:'Aces', blocks:'Blocks', digs:'Digs', assists:'Assists' };
+  return <SceneShell><HeaderBand match={match} title="Player Leaders" subtitle={p.division||null} /><div style={{flex:1,padding:24,display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{cats.slice(0,4).map((c,i)=><Fade key={c} delay={0.05+i*0.05}><div style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.08)',padding:14}}><div style={{fontSize:28,fontWeight:800,color:'var(--broadcast-accent)',marginBottom:8}}>{label[c]||c}</div>{(all[c]?.rows||[]).slice(0,5).map((r:any,ri:number)=><div key={r.playerId||ri} style={{display:'grid',gridTemplateColumns:'30px 1fr 50px',gap:8,padding:'4px 0',fontSize:24,borderBottom:'1px solid rgba(255,255,255,0.06)'}}><span style={{color:'#9fb0c8'}}>{r.rank}</span><span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.name}</span><span style={{textAlign:'right',fontWeight:800}}>{Math.round((r.value||0)*10)/10}</span></div>)}</div></Fade>)}</div></SceneShell>;
+};
+
+export const LeaderboardCombinedGraphic: React.FC<{ match: AnyMatch; scene?: AnyScene; payload?: any }> = ({ match, scene, payload }) => {
+  const p = payload || scene?.payload || {};
+  const competitionId = p.competitionId || (match as any)?.competitionId;
+  const [data, setData] = useState<any>(null);
+  useEffect(() => { if (!competitionId) return; let alive=true; fetch('/api/v1/public/leaderboards/competition/'+encodeURIComponent(competitionId)+'/combined'+(p.division?'?division='+encodeURIComponent(p.division):'')).then(r=>r.json()).then(r=>{ if(alive) setData(r.data); }).catch(()=>{}); return ()=>{alive=false}; }, [competitionId, p.division]);
+  const rows = (data?.standings?.rows||[]).slice(0,8);
+  const leaders = data?.leaders || {};
+  const label: any = { points:'Scorers', aces:'Aces', blocks:'Blocks', kills:'Kills' };
+  return <SceneShell><HeaderBand match={match} title="Season Summary" subtitle={data?.standings?.competitionName || null} />
+    <div style={{flex:1,padding:24,display:'grid',gridTemplateColumns:'1.2fr 1fr',gap:20}}>
+      <div><div style={{fontSize:28,fontWeight:800,marginBottom:8,color:'var(--broadcast-accent)'}}>Standings</div>{rows.map((r:any,i:number)=><div key={r.teamId||i} style={{display:'grid',gridTemplateColumns:'40px 1fr 50px 50px',gap:8,padding:'6px 0',borderBottom:'1px solid rgba(255,255,255,0.06)',fontSize:24}}><span>{r.rank}</span><span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.teamName}</span><span style={{color:'#9fb0c8'}}>{r.played}</span><span style={{fontWeight:800,textAlign:'right'}}>{r.matchPoints}</span></div>)}</div>
+      <div style={{display:'grid',gap:12}}>{['points','aces','blocks','kills'].map(c=><div key={c}><div style={{fontSize:24,fontWeight:800,color:'var(--broadcast-accent)'}}>{label[c]}</div>{(leaders[c]?.rows||[]).slice(0,3).map((r:any,ri:number)=><div key={r.playerId||ri} style={{display:'grid',gridTemplateColumns:'24px 1fr 40px',fontSize:20,color:'#d6deea'}}><span>{r.rank}</span><span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.name}</span><span style={{textAlign:'right'}}>{Math.round(r.value||0)}</span></div>)}</div>)}</div>
+    </div></SceneShell>;
+};
+
 export const SCENE_COMPONENTS: Record<string, React.FC<any>> = {
   SET_BREAK: SetBreakScene,
   TIMEOUT: TimeoutScene,
@@ -882,7 +1278,7 @@ export const SCENE_COMPONENTS: Record<string, React.FC<any>> = {
 };
 
 // Back-compat named exports / map for existing routes and preview tooling
-export const MatchIntroGraphic = (props: any) => <BreakSlateScene {...props} />;
+export const MatchIntroGraphic = (props: any) => <MatchIntroTeams {...props} />;
 export const TeamIntroGraphic = TeamIntroScene;
 export const StartingLineupGraphic = (props: any) => <LineupsScene {...props} />;
 export const PlayerSpotlightGraphic = PlayerSpotlightTemplateScene;
@@ -900,7 +1296,11 @@ export const TEMPLATE_COMPONENTS: Record<string, React.FC<any>> = {
   MATCH_INTRO: MatchIntroGraphic,
   TEAM_INTRO: TeamIntroGraphic,
   STARTING_LINEUP: StartingLineupGraphic,
+  STARTING_SIX_COURT: StartingSixCourt,
+  TEAM_SQUAD_PROFILES: TeamSquadProfiles,
+  TEAM_ROSTER_GRID: TeamRosterGrid,
   PLAYER_SPOTLIGHT: PlayerSpotlightGraphic,
+  PLAYER_ACTION: PlayerActionLowerThird,
   PLAYER_LEADERBOARD: PlayerLeaderboardGraphic,
   TEAM_COMPARISON: TeamComparisonGraphic,
   MATCH_STATISTICS: MatchStatisticsGraphic,
@@ -909,4 +1309,9 @@ export const TEMPLATE_COMPONENTS: Record<string, React.FC<any>> = {
   MATCH_MOMENTUM: MatchMomentumGraphic,
   TOP_PERFORMERS: TopPerformersGraphic,
   FINAL_MATCH_RESULT: FinalMatchResultGraphic,
+  LEADERBOARD: LeaderboardGraphic,
+  FIXTURES: FixturesGraphic,
+  PLAYER_LEADERS: PlayerLeadersGraphic,
+  PLAYER_LEADERS_GRID: PlayerLeadersGridGraphic,
+  LEADERBOARD_COMBINED: LeaderboardCombinedGraphic,
 };

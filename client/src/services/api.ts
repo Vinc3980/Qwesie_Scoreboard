@@ -108,10 +108,22 @@ export const authApi = {
 };
 
 export const uploadsApi = {
-  upload: async (file: File): Promise<{ url: string; filename: string }> => {
+  upload: async (
+    file: File,
+    scope: 'player-photo' | 'team-logo' | 'team-coach' | 'team-photo' | 'generic' = 'generic',
+    onProgress?: (percent: number) => void,
+  ): Promise<{ url: string; thumbUrl?: string | null; key?: string | null; thumbKey?: string | null; width?: number; height?: number; filename?: string }> => {
     const fd = new FormData();
     fd.append('file', file);
-    const res = await apiClient.post<ApiResponse<any>>('/uploads', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    fd.append('scope', scope);
+    const res = await apiClient.post<ApiResponse<any>>('/uploads', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (evt) => {
+        if (!onProgress) return;
+        const total = evt.total || file.size || 1;
+        onProgress(Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100))));
+      },
+    });
     return res.data.data;
   },
 };
@@ -148,9 +160,13 @@ export const matchApi = {
     return res.data.data;
   },
 
-  action: async (data: ActionMutationInput & { playerId?: string; clientEventId?: string }, matchId?: string): Promise<MatchState> => {
+  action: async (data: ActionMutationInput & { playerId?: string; assistPlayerId?: string; clientEventId?: string }, matchId?: string): Promise<MatchState> => {
     const url = matchId ? `/matches/${matchId}/action` : '/matches/action';
     const res = await apiClient.post<ApiResponse<MatchState>>(url, data);
+    return res.data.data;
+  },
+  attributeEvent: async (matchId: string, eventId: string, data: { playerId?: string | null; assistPlayerId?: string | null }): Promise<MatchState> => {
+    const res = await apiClient.patch<ApiResponse<MatchState>>(`/matches/${matchId}/events/${encodeURIComponent(eventId)}/attribution`, data);
     return res.data.data;
   },
 
@@ -204,6 +220,10 @@ export const matchApi = {
 
   getReadiness: async (matchId: string): Promise<MatchReadiness> => {
     const res = await apiClient.get<ApiResponse<MatchReadiness>>(`/matches/${matchId}/readiness`);
+    return res.data.data;
+  },
+  getTeamSheet: async (matchId: string): Promise<any> => {
+    const res = await apiClient.get<ApiResponse<any>>(`/matches/${matchId}/team-sheet`);
     return res.data.data;
   },
   goLive: async (matchId: string): Promise<MatchState> => {
@@ -271,6 +291,40 @@ export const competitionsApi = {
   create: async (body: any) => (await apiClient.post<ApiResponse<any>>('/competitions', body)).data.data,
   update: async (id: string, body: any) => (await apiClient.put<ApiResponse<any>>(`/competitions/${id}`, body)).data.data,
   remove: async (id: string) => (await apiClient.delete<ApiResponse<any>>(`/competitions/${id}`)).data.data,
+  standings: async (id: string, params: any = {}) => (await apiClient.get<ApiResponse<any>>(`/competitions/${id}/standings`, { params })).data.data,
+  fixtures: async (id: string, params: any = {}) => (await apiClient.get<ApiResponse<any>>(`/competitions/${id}/fixtures`, { params })).data.data,
+  divisions: async (id: string) => (await apiClient.get<ApiResponse<string[]>>(`/competitions/${id}/divisions`)).data.data,
+  generateFixturesPreview: async (id: string, body: any) => (await apiClient.post<ApiResponse<any>>(`/competitions/${id}/fixtures/generate-preview`, body)).data.data,
+  commitFixtures: async (id: string, body: any) => (await apiClient.post<ApiResponse<any>>(`/competitions/${id}/fixtures/generate-commit`, body)).data.data,
+};
+
+export const leaderboardApi = {
+  listThemes: async (competitionId?: string) => (await apiClient.get<ApiResponse<any[]>>('/leaderboards/themes', { params: competitionId ? { competitionId } : undefined })).data.data,
+  getTheme: async (id: string) => (await apiClient.get<ApiResponse<any>>(`/leaderboards/themes/${id}`)).data.data,
+  createTheme: async (body: any) => (await apiClient.post<ApiResponse<any>>('/leaderboards/themes', body)).data.data,
+  updateTheme: async (id: string, body: any) => (await apiClient.put<ApiResponse<any>>(`/leaderboards/themes/${id}`, body)).data.data,
+  deleteTheme: async (id: string) => (await apiClient.delete<ApiResponse<any>>(`/leaderboards/themes/${id}`)).data.data,
+  duplicateTheme: async (id: string, body: any = {}) => (await apiClient.post<ApiResponse<any>>(`/leaderboards/themes/${id}/duplicate`, body)).data.data,
+  setDefault: async (id: string, body: any = {}) => (await apiClient.post<ApiResponse<any>>(`/leaderboards/themes/${id}/default`, body)).data.data,
+  applyToCompetition: async (id: string, competitionId: string) => (await apiClient.post<ApiResponse<any>>(`/leaderboards/themes/${id}/apply-competition/${competitionId}`, {})).data.data,
+  applyToOnAir: async (id: string, body: any) => (await apiClient.post<ApiResponse<any>>(`/leaderboards/themes/${id}/apply-on-air`, body)).data.data,
+  exportTheme: async (id: string) => (await apiClient.get<ApiResponse<any>>(`/leaderboards/themes/${id}/export`)).data.data,
+  importTheme: async (body: any) => (await apiClient.post<ApiResponse<any>>('/leaderboards/themes/import', body)).data.data,
+  resolveTheme: async (params: any = {}) => (await apiClient.get<ApiResponse<any>>('/leaderboards/themes/resolve', { params })).data.data,
+  playerLeaderboard: async (competitionId: string, params: any = {}) => (await apiClient.get<ApiResponse<any>>(`/leaderboards/competition/${competitionId}/players`, { params })).data.data,
+  combined: async (competitionId: string, params: any = {}) => (await apiClient.get<ApiResponse<any>>(`/leaderboards/competition/${competitionId}/combined`, { params })).data.data,
+};
+
+export const publicApi = {
+  competition: async (id: string) => (await axios.get(`/api/v1/public/competitions/${id}`)).data.data,
+  standings: async (id: string, params: any = {}) => (await axios.get(`/api/v1/public/competitions/${id}/standings`, { params })).data.data,
+  fixtures: async (id: string, params: any = {}) => (await axios.get(`/api/v1/public/competitions/${id}/fixtures`, { params })).data.data,
+  divisions: async (id: string) => (await axios.get(`/api/v1/public/competitions/${id}/divisions`)).data.data,
+  playerLeaderboard: async (competitionId: string, params: any = {}) => (await axios.get(`/api/v1/public/leaderboards/competition/${competitionId}/players`, { params })).data.data,
+  combined: async (competitionId: string, params: any = {}) => (await axios.get(`/api/v1/public/leaderboards/competition/${competitionId}/combined`, { params })).data.data,
+  leaderboardTheme: async (id: string) => (await axios.get(`/api/v1/public/leaderboards/themes/${id}`)).data.data,
+  leaderboardThemes: async (competitionId?: string) => (await axios.get(`/api/v1/public/leaderboards/themes`, { params: competitionId ? { competitionId } : undefined })).data.data,
+  resolveLeaderboardTheme: async (params: any = {}) => (await axios.get(`/api/v1/public/leaderboards/themes/resolve`, { params })).data.data,
 };
 
 export const rosterApi = {
@@ -330,7 +384,7 @@ export const broadcastApi = {
     const res = await apiClient.post<ApiResponse<any>>(`/broadcast/${matchId}/scene`, body);
     return res.data.data;
   },
-  setAutoTriggers: async (matchId: string, body: { setBreakSeconds?: number; timeoutSeconds?: number; setBreakEnabled?: boolean; timeoutEnabled?: boolean; finalEnabled?: boolean; midMatchAfterSet?: number | null; midMatchSeconds?: number }): Promise<any> => {
+  setAutoTriggers: async (matchId: string, body: { setBreakSeconds?: number; timeoutSeconds?: number; setBreakEnabled?: boolean; timeoutEnabled?: boolean; finalEnabled?: boolean; midMatchAfterSet?: number | null; midMatchSeconds?: number; attributionOnAir?: 'off' | 'auto' | 'one-click' }): Promise<any> => {
     const res = await apiClient.post<ApiResponse<any>>(`/broadcast/${matchId}/scene/auto-triggers`, body);
     return res.data.data;
   },
@@ -350,6 +404,10 @@ export const broadcastApi = {
     const res = await apiClient.post<ApiResponse<any>>(`/broadcast/${matchId}/clear`);
     return res.data.data;
   },
+  getIntroSequence: async (matchId: string): Promise<any> => (await apiClient.get<ApiResponse<any>>(`/broadcast/${matchId}/sequence`)).data.data,
+  updateIntroSequence: async (matchId: string, body: any): Promise<any> => (await apiClient.put<ApiResponse<any>>(`/broadcast/${matchId}/sequence`, body)).data.data,
+  startIntroSequence: async (matchId: string, body: any = {}): Promise<any> => (await apiClient.post<ApiResponse<any>>(`/broadcast/${matchId}/sequence/start`, body)).data.data,
+  controlIntroSequence: async (matchId: string, body: any): Promise<any> => (await apiClient.post<ApiResponse<any>>(`/broadcast/${matchId}/sequence/control`, body)).data.data,
 };
 
 export const scorebugThemeApi = {

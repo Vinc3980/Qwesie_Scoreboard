@@ -23,3 +23,9 @@ broadcastRouter.post('/:matchId/scene/auto-triggers', scorer, BroadcastControlle
 broadcastRouter.post('/:matchId/preview', scorer, BroadcastController.setPreview);
 broadcastRouter.post('/:matchId/take', scorer, BroadcastController.take);
 broadcastRouter.post('/:matchId/clear', scorer, BroadcastController.clear);
+
+// Intro sequence runner (server-timed)
+broadcastRouter.get('/:matchId/sequence', scorer, BroadcastController.getSequence);
+broadcastRouter.put('/:matchId/sequence', scorer, BroadcastController.updateSequence);
+broadcastRouter.post('/:matchId/sequence/start', scorer, BroadcastController.startSequence);
+broadcastRouter.post('/:matchId/sequence/control', scorer, BroadcastController.controlSequence);

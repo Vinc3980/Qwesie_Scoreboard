@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -106,12 +107,13 @@ export const StatisticsPage: React.FC = () => {
   const notify = useNotification();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
+  const poll = usePollingFallback(20_000);
 
   const tab: 'match' | 'all' = params.get('tab') === 'all' ? 'all' : 'match';
   const scopeParam = params.get('scope') || 'match';
   const scope: 'match' | number = scopeParam.startsWith('set') ? (Number(scopeParam.slice(3)) || 1) : 'match';
 
-  const { data: matches = [], isLoading: matchesLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: 10000 });
+  const { data: matches = [], isLoading: matchesLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: poll, staleTime: 15_000 });
 
   const defaultMatchId = useMemo(() => {
     const live = matches.find((m: any) => ['LIVE', 'PAUSED', 'BETWEEN_SETS', 'SUSPENDED'].includes(String(m.status)));
@@ -135,14 +137,16 @@ export const StatisticsPage: React.FC = () => {
     queryKey: ['analytics', matchId],
     queryFn: () => matchApi.getAnalytics(matchId),
     enabled: !!matchId && tab === 'match',
-    refetchInterval: 5000,
+    refetchInterval: poll,
+    staleTime: 15_000,
   });
 
   const { data: matchDetail } = useQuery({
     queryKey: ['stats-match', matchId],
     queryFn: () => matchApi.getMatchById(matchId),
     enabled: !!matchId,
-    refetchInterval: 8000,
+    refetchInterval: poll,
+    staleTime: 10_000,
   });
 
   const selected = useMemo(() => {

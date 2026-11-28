@@ -18,6 +18,7 @@ export const actionMutationSchema = z.object({
   team: teamIdSchema,
   action: z.string().min(1, 'action is required').transform(v => v.trim().toUpperCase()),
   playerId: z.string().optional(),
+  assistPlayerId: z.string().optional(),
   clientEventId: z.string().max(80).optional(),
 });
 
@@ -41,6 +42,11 @@ export const substitutionMutationSchema = z.object({
 
 export const undoMutationSchema = z.object({
   clientEventId: z.string().max(80).optional(),
+});
+
+export const eventAttributionSchema = z.object({
+  playerId: z.string().nullable().optional(),
+  assistPlayerId: z.string().nullable().optional(),
 });
 
 const rulesetSchema = z.enum(['FIVB_BO5', 'BO3', 'CUSTOM']).optional();

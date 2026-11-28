@@ -27,7 +27,7 @@ function Qr({ url }: { url: string }) {
     (QRCode as any).toDataURL(url, { width: 140, margin: 1 }).then((s: string) => { if (alive) setSrc(s); }).catch(() => {});
     return () => { alive = false; };
   }, [url]);
-  return src ? <img src={src} alt="QR" className="w-[100px] h-[100px] rounded bg-surface p-1 border border-border" /> : <div className="w-[100px] h-[100px] rounded bg-surface-sunken border border-border flex items-center justify-center text-xs text-fg-muted">QR</div>;
+  return src ? <img src={src} alt="QR" width={100} height={100} loading="lazy" decoding="async" className="w-[100px] h-[100px] rounded bg-surface p-1 border border-border" /> : <div className="w-[100px] h-[100px] rounded bg-surface-sunken border border-border flex items-center justify-center text-xs text-fg-muted">QR</div>;
 }
 
 export const OutputsPanel: React.FC<Props> = ({ open, onClose, matchId, court: courtProp, inline }) => {

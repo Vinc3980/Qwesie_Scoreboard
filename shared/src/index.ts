@@ -4,6 +4,8 @@ export * from './types/match.types.js';
 export * from './types/api.types.js';
 export * from './validation/match.schemas.js';
 export * from './scorebug/theme.js';
+export * from './leaderboard/theme.js';
+export * from './utils/courtLayout.js';
 
 export function parseBulkPlayerRows(text: string) {
   const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);

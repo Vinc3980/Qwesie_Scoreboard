@@ -4,7 +4,9 @@ import { matchApi } from '../services/api.js';
 import { getSocket } from '../services/socket.js';
 import {
   MatchState,
+  MatchStatePatch,
   SOCKET_EVENTS,
+  applyMatchStatePatch,
   PointMutationInput,
   ActionMutationInput,
   TimeoutMutationInput,
@@ -29,52 +31,89 @@ export function useMatch(matchId?: string) {
   // Socket.IO synchronization
   useEffect(() => {
     const activeId = query.data?.id || matchId;
-
-    if (activeId) {
-      socket.emit(SOCKET_EVENTS.MATCH_JOIN, activeId);
-    }
+    if (activeId) socket.emit(SOCKET_EVENTS.MATCH_JOIN, activeId);
 
     const handleState = (state: MatchState) => {
-      // Update cache instantly
+      if (!state?.id) return;
       queryClient.setQueryData(['match', matchId || 'current'], state);
       queryClient.setQueryData(['match', state.id], state);
     };
-
-    const handleError = (data: { message: string }) => {
-      notify.error(data.message);
+    const handlePatch = (patch: MatchStatePatch) => {
+      if (!patch?.id) return;
+      const keys = [['match', matchId || 'current'], ['match', patch.id]];
+      for (const key of keys) {
+        queryClient.setQueryData<MatchState>(key as any, (prev) => (prev ? applyMatchStatePatch(prev, patch) : prev));
+      }
     };
+    const handleError = (data: { message: string }) => notify.error(data.message);
 
     socket.on(SOCKET_EVENTS.MATCH_STATE, handleState);
+    socket.on(SOCKET_EVENTS.MATCH_STATE_PATCH as any, handlePatch);
     socket.on(SOCKET_EVENTS.MATCH_ERROR, handleError);
-
     return () => {
-      if (activeId) {
-        socket.emit(SOCKET_EVENTS.MATCH_LEAVE, activeId);
-      }
+      if (activeId) socket.emit(SOCKET_EVENTS.MATCH_LEAVE, activeId);
       socket.off(SOCKET_EVENTS.MATCH_STATE, handleState);
+      socket.off(SOCKET_EVENTS.MATCH_STATE_PATCH as any, handlePatch);
       socket.off(SOCKET_EVENTS.MATCH_ERROR, handleError);
     };
   }, [matchId, query.data?.id, queryClient, notify, socket]);
 
-  // Mutations
+  const activeKey = ['match', matchId || 'current'] as const;
+  const snapshot = () => queryClient.getQueryData<MatchState>(activeKey as any);
+  const restore = (prev?: MatchState) => { if (prev) { queryClient.setQueryData(activeKey as any, prev); queryClient.setQueryData(['match', prev.id], prev); } };
+
+  // Mutations - hot path is optimistic for instant console feedback.
   const pointMutation = useMutation({
     mutationFn: (data: PointMutationInput) => matchApi.point(data, query.data?.id),
-    onSuccess: (state) => {
-      queryClient.setQueryData(['match', matchId || 'current'], state);
+    onMutate: async (data) => {
+      await queryClient.cancelQueries({ queryKey: activeKey as any });
+      const prev = snapshot();
+      if (prev) {
+        const team = data.team;
+        const delta = data.delta ?? 1;
+        const cur = prev.current_set;
+        const idx = Math.max(0, Math.min(4, cur - 1));
+        const nextScores = { A: [...prev.set_scores.A], B: [...prev.set_scores.B] } as any;
+        nextScores[team][idx] = Math.max(0, (nextScores[team][idx] || 0) + delta);
+        const optimistic: MatchState = {
+          ...prev,
+          teams: {
+            ...prev.teams,
+            [team]: { ...prev.teams[team], score: Math.max(0, (prev.teams[team].score || 0) + delta) },
+          } as any,
+          set_scores: nextScores,
+          server: delta > 0 ? team : prev.server,
+          perf: { ...(prev.perf || {}), source: 'cache' },
+        };
+        queryClient.setQueryData(activeKey as any, optimistic);
+      }
+      return { prev };
     },
-    onError: (err: Error) => {
-      notify.error(err.message);
-    },
+    onSuccess: (state) => { queryClient.setQueryData(activeKey as any, state); queryClient.setQueryData(['match', state.id], state); },
+    onError: (err: Error, _v, ctx) => { restore(ctx?.prev); notify.error(err.message); },
   });
 
   const actionMutation = useMutation({
     mutationFn: (data: ActionMutationInput) => matchApi.action(data, query.data?.id),
-    onSuccess: (state) => {
-      queryClient.setQueryData(['match', matchId || 'current'], state);
+    onMutate: async (data) => {
+      await queryClient.cancelQueries({ queryKey: activeKey as any });
+      const prev = snapshot();
+      if (prev) {
+        const scoring = ['KILL','ACE','BLOCK'].includes(String(data.action || '').toUpperCase());
+        const attackErr = String(data.action || '').toUpperCase() === 'ATTACK_ERROR';
+        const team = scoring ? data.team : attackErr ? (data.team === 'A' ? 'B' : 'A') : null;
+        if (team) {
+          const cur = prev.current_set; const idx = Math.max(0, Math.min(4, cur - 1));
+          const nextScores = { A: [...prev.set_scores.A], B: [...prev.set_scores.B] } as any;
+          nextScores[team][idx] = Math.max(0, (nextScores[team][idx] || 0) + 1);
+          const optimistic: MatchState = { ...prev, teams: { ...prev.teams, [team]: { ...prev.teams[team], score: Math.max(0, (prev.teams[team].score || 0) + 1) } } as any, set_scores: nextScores, server: team, perf: { ...(prev.perf || {}), source: 'cache' } };
+          queryClient.setQueryData(activeKey as any, optimistic);
+        }
+      }
+      return { prev };
     },
-    onError: (err: Error) => {
-      notify.error(err.message);
-    },
+    onSuccess: (state) => { queryClient.setQueryData(activeKey as any, state); queryClient.setQueryData(['match', state.id], state); },
+    onError: (err: Error, _v, ctx) => { restore(ctx?.prev); notify.error(err.message); },
   });
 
   const timeoutMutation = useMutation({

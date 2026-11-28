@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, SlidersHorizontal, Play, Calendar, MapPin, ClipboardList, Edit3, Rocket, CheckCircle2, Clock3, AlertTriangle, Archive, RotateCcw } from 'lucide-react';
 import { matchApi } from '../services/api.js';
@@ -41,8 +42,10 @@ export const MatchesPage: React.FC = () => {
   const [conflict, setConflict] = useState<{ court: string; conflict: CourtConflict; matchId: string } | null>(null);
   const [resetTarget, setResetTarget] = useState<any | null>(null);
   const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(60);
 
-  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: 5000 });
+  const poll = usePollingFallback(20_000);
+  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: poll, staleTime: 10_000 });
 
   const goLive = useMutation({
     mutationFn: (id: string) => matchApi.goLive(id),
@@ -83,6 +86,7 @@ export const MatchesPage: React.FC = () => {
       return ta - tb;
     });
   }, [matches, q]);
+  React.useEffect(() => { setVisibleCount(60); }, [q]);
 
   const todayStr = new Date().toDateString();
   const today = filtered.filter((m: any) => m.scheduledAt && new Date(m.scheduledAt).toDateString() === todayStr);
@@ -118,7 +122,8 @@ export const MatchesPage: React.FC = () => {
             </div>
           )}
           {!isLoading && today.length > 0 && <div className="text-xs font-bold uppercase tracking-[0.1em] text-fg-subtle">Today</div>}
-          {(!isLoading ? (today.length ? today.concat(rest.length ? [{ __section: 'rest' } as any] : [], rest) : filtered) : []).map((m: any) => {
+          {(() => { const list = !isLoading ? (today.length ? today.concat(rest.length ? [{ __section: 'rest' } as any] : [], rest) : filtered) : []; const shown = list.slice(0, visibleCount); return (<>
+          {shown.map((m: any) => {
             if (m.__section === 'rest') return <div key="rest" className="text-xs font-bold uppercase tracking-[0.1em] text-fg-subtle pt-2">Other matches</div>;
             const action = statusAction(m.status);
             const when = startLabel(m.scheduledAt);
@@ -154,6 +159,8 @@ export const MatchesPage: React.FC = () => {
               </div>
             );
           })}
+          {list.length > visibleCount && <div className="pt-2 flex justify-center"><Button variant="outline" size="sm" onClick={() => setVisibleCount(c => c + 60)}>Show more ({list.length - visibleCount} remaining)</Button></div>}
+          </>); })()}
         </div>
       </Card>
 

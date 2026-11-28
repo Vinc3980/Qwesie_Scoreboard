@@ -2,6 +2,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { matchApi } from '../services/api.js';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
 
 const STORAGE_KEY = 'qwesie.currentMatchId';
 const EXPLICIT_KEY = 'qwesie.currentMatchId.explicit';
@@ -75,7 +76,8 @@ export const CurrentMatchProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const location = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: 5000 });
+  const poll = usePollingFallback(20_000);
+  const { data: matches = [], isLoading } = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: poll, staleTime: 10_000 });
   const initialFromUrl = getIdFromLocation(window.location.pathname, window.location.search);
   const [currentMatchId, setIdState] = useState<string | null>(() => initialFromUrl || loadStored());
   const explicitRef = useRef<boolean>(!!initialFromUrl || loadExplicit());

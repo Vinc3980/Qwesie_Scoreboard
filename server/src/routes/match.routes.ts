@@ -10,6 +10,7 @@ import {
   matchSetupSchema,
   matchInfoSchema,
   undoMutationSchema,
+  eventAttributionSchema,
   rosterReplaceSchema,
   lineupSetSchema,
   startSetSchema,
@@ -26,6 +27,7 @@ matchRouter.get('/active', requireAuth, MatchController.getActiveMatch);
 matchRouter.get('/current/analytics', requireAuth, MatchController.getAnalytics);
 matchRouter.get('/current/report', requireAuth, MatchController.getReport);
 matchRouter.get('/:id/readiness', requireAuth, MatchController.getReadiness);
+matchRouter.get('/:id/team-sheet', requireAuth, MatchController.getTeamSheet);
 matchRouter.get('/:id/roster/:side', requireAuth, MatchController.getRoster);
 matchRouter.get('/:id/analytics', requireAuth, MatchController.getAnalytics);
 matchRouter.get('/:id/report', requireAuth, MatchController.getReport);
@@ -49,6 +51,7 @@ matchRouter.post('/:id/setup', scorer, validate(matchSetupSchema), MatchControll
 matchRouter.post('/:id/info', scorer, validate(matchInfoSchema), MatchController.info);
 matchRouter.post('/:id/status', scorer, MatchController.setStatus);
 matchRouter.post('/:id/undo', scorer, validate(undoMutationSchema), MatchController.undo);
+matchRouter.patch('/:id/events/:eventId/attribution', scorer, validate(eventAttributionSchema), MatchController.attributeEvent);
 
 // Default match mutation routes (for active current match)
 matchRouter.post('/point', scorer, validate(pointMutationSchema), MatchController.point);

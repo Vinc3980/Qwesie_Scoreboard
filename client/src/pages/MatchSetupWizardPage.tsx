@@ -1,8 +1,11 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams, Link } from 'react-router-dom';
-import { CheckCircle2, ChevronLeft, ChevronRight, Copy, Save, Upload, AlertTriangle, Wand2, Tv, Hash, UserPlus } from 'lucide-react';
-import { competitionsApi, lineupApi, matchApi, rosterApi, systemApi, teamsApi } from '../services/api.js';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
+import { useNavigate, useParams, Link, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, ChevronLeft, ChevronRight, Copy, Save, Upload, AlertTriangle, Wand2, Tv, Hash, UserPlus, ClipboardList } from 'lucide-react';
+import { competitionsApi, lineupApi, matchApi, playersApi, rosterApi, systemApi, teamsApi, uploadsApi } from '../services/api.js';
+import { Avatar } from '../components/ui/Avatar.js';
+import { CourtDiagram, assignmentsFromArray, assignmentsToArray, validateLineupAssignments, type LineupAssignments, type CourtPlayer } from '../components/lineup/CourtDiagram.js';
 import OutputsPanel from '../components/outputs/OutputsPanel.js';
 import { CourtConflictDialog, getCourtConflict, type CourtConflict } from '../components/match/CourtConflictDialog.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
@@ -40,6 +43,8 @@ type RosterEditorViewProps = {
   saving: boolean;
   issuesByRow: RowIssueMap;
   teamHasNoPlayers: boolean;
+  teamColor?: string | null;
+  teamTextColor?: string | null;
   onLoadTeam: (side: 'A'|'B') => void;
   onCopyLast: (side: 'A'|'B') => void;
   onSave: (side: 'A'|'B') => void;
@@ -54,10 +59,25 @@ type RosterEditorViewProps = {
 };
 
 const RosterEditorView: React.FC<RosterEditorViewProps> = ({
-  side, rows, paste, setPaste, quick, setQuick, saving, issuesByRow, teamHasNoPlayers,
+  side, rows, paste, setPaste, quick, setQuick, saving, issuesByRow, teamHasNoPlayers, teamColor, teamTextColor,
   onLoadTeam, onCopyLast, onSave, onAutoNumber, onUpdateCell, onKeyDownCell, onRemoveRow, onAddRow, onSelectAll, onImportPaste, onQuickAdd,
 }) => {
   const parsed = parseBulkPlayerRows(paste);
+  const uploadRowPhoto = async (key: string, file?: File) => {
+    if (!file) return;
+    const row = rows.find(r => r._key === key);
+    if (!row) return;
+    try {
+      const up = await uploadsApi.upload(file, 'player-photo');
+      onUpdateCell(side, key, { photoUrl: up.url, thumbUrl: up.thumbUrl || up.url, photoKey: up.key, thumbKey: up.thumbKey });
+      if (row.playerId) {
+        await playersApi.update(row.playerId, { photoKey: up.key, thumbKey: up.thumbKey, photoUrl: null });
+      }
+    } catch (e: any) {
+      // non-blocking; row remains editable
+      console.error(e);
+    }
+  };
   const validation = validateRosterRows(rows, side);
   const included = rows.filter(r => r.included).length;
   const needsJersey = rows.filter(r => r.included && !isValidJersey(parseJersey(r.jerseyNumber))).length;
@@ -99,7 +119,7 @@ const RosterEditorView: React.FC<RosterEditorViewProps> = ({
 
         <div className="overflow-auto border border-border rounded-lg">
           <table className="w-full text-sm min-w-[700px]">
-            <thead className="bg-surface-sunken"><tr><th className="p-2 text-left text-fg-muted">Use</th><th className="p-2 text-left text-fg-muted">#</th><th className="p-2 text-left text-fg-muted">Name</th><th className="p-2 text-left text-fg-muted">Pos</th><th className="p-2 text-fg-muted">C</th><th className="p-2 text-fg-muted">L</th><th className="p-2"></th></tr></thead>
+            <thead className="bg-surface-sunken"><tr><th className="p-2 text-left text-fg-muted">Use</th><th className="p-2 text-left text-fg-muted">Photo</th><th className="p-2 text-left text-fg-muted">#</th><th className="p-2 text-left text-fg-muted">Name</th><th className="p-2 text-left text-fg-muted">Pos</th><th className="p-2 text-fg-muted">C</th><th className="p-2 text-fg-muted">L</th><th className="p-2"></th></tr></thead>
             <tbody>
               {rows.map((r, rowIndex) => {
                 const rowIssues = issuesByRow[r._key] || [];
@@ -109,6 +129,13 @@ const RosterEditorView: React.FC<RosterEditorViewProps> = ({
                 return (
                   <tr key={r._key} className="border-t border-border align-top">
                     <td className="p-2 pt-3"><input type="checkbox" checked={r.included} onChange={e => onUpdateCell(side, r._key, { included: e.target.checked })} aria-label={`Include row ${rowIndex + 1}`} /></td>
+                    <td className="p-2">
+                      <label className="inline-flex flex-col items-center gap-1 cursor-pointer group">
+                        <Avatar src={r.thumbUrl || r.photoUrl} name={r.name || `#${r.jerseyNumber}`} size={34} color={teamColor} textColor={teamTextColor} />
+                        <span className="text-[10px] text-fg-muted group-hover:text-fg">Photo</span>
+                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => { void uploadRowPhoto(r._key, e.target.files?.[0]); e.currentTarget.value = ''; }} aria-label={`Upload photo for row ${rowIndex + 1}`} />
+                      </label>
+                    </td>
                     <td className="p-2 w-24">
                       <input
                         data-side={side}
@@ -172,75 +199,18 @@ const RosterEditorView: React.FC<RosterEditorViewProps> = ({
   );
 };
 
-type LineupPickerViewProps = {
-  side: 'A' | 'B';
-  roster: RosterRow[];
-  lineup: Array<string | null>;
-  selectedPos: { side: 'A'|'B'; idx: number } | null;
-  onSameAsLast: (side: 'A'|'B') => void;
-  onSwap: () => void;
-  onSave: (side: 'A'|'B') => void;
-  onSelectPos: (pos: { side: 'A'|'B'; idx: number }) => void;
-  onAssign: (side: 'A'|'B', playerId: string) => void;
-};
 
-const LineupPickerView: React.FC<LineupPickerViewProps> = ({
-  side, roster, lineup, selectedPos, onSameAsLast, onSwap, onSave, onSelectPos, onAssign,
-}) => {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{sideLabel(side)} starting six (Set 1)</CardTitle>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => onSameAsLast(side)}>Same as last set</Button>
-          {side === 'A' && <Button variant="outline" size="sm" onClick={onSwap}>Swap A/B</Button>}
-          <Button variant="secondary" size="sm" onClick={() => onSave(side)}>Save lineup</Button>
-        </div>
-      </CardHeader>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div>
-          <div className="text-xs text-fg-muted mb-2">Tap a court position, then tap a player. Positions 1-6 (rotation).</div>
-          <div className="grid grid-cols-3 gap-2 bg-success-subtle border border-success/30 rounded-xl p-3 aspect-[4/3]">
-            {[3,2,1,4,5,6].map((p) => {
-              const idx = p - 1; const pid = lineup[idx]; const player = roster.find(r => r.playerId === pid || r._key === pid);
-              const sel = selectedPos?.side === side && selectedPos.idx === idx;
-              return (
-                <button type="button" key={p} onClick={() => onSelectPos({ side, idx })} className={`rounded-lg border p-2 text-left min-h-[72px] focus:outline-none focus-visible:ring-2 focus-visible:ring-focus ${sel ? 'border-accent ring-1 ring-accent/40' : 'border-border-strong'} bg-surface-raised text-fg`}>
-                  <div className="text-[10px] font-bold text-fg-muted">POS {p}</div>
-                  <div className="text-sm font-semibold truncate">{player ? `#${player.jerseyNumber} ${player.name}` : 'Tap to assign'}</div>
-                </button>
-              );
-            })}
-          </div>
-          {lineup.some(x => !x) && <div className="text-xs text-warning mt-2 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Assign all 6 positions</div>}
-        </div>
-        <div>
-          <div className="text-xs text-fg-muted mb-2">Roster players (tap to place in selected position)</div>
-          <div className="flex flex-wrap gap-2">
-            {roster.map(r => {
-              const placed = lineup.findIndex(x => x === r.playerId || x === r._key);
-              return (
-                <button type="button" key={r._key} onClick={() => onAssign(side, r.playerId || r._key)} className={`px-3 py-2 rounded-lg border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-focus ${placed >= 0 ? 'border-accent bg-accent-subtle' : 'border-border bg-surface-raised'} text-fg`}>
-                  <span className="font-bold mr-1">#{r.jerseyNumber}</span>{r.name} {r.isLibero ? <span className="text-xs text-warning ml-1">L</span> : null}
-                </button>
-              );
-            })}
-            {!roster.length && <div className="text-sm text-fg-muted">Save roster first to pick players.</div>}
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-};
 
 export const MatchSetupWizardPage: React.FC = () => {
   const { id: routeMatchId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const notify = useNotification();
   const qc = useQueryClient();
   const { setCurrentMatchId } = useCurrentMatch();
   const [conflict, setConflict] = useState<{ court: string; conflict: CourtConflict; retry?: () => Promise<void> } | null>(null);
-  const [step, setStep] = useState(1);
+  const initialStep = Number(searchParams.get('step') || '1');
+  const [step, setStep] = useState(Number.isFinite(initialStep) && initialStep >= 1 && initialStep <= 5 ? initialStep : 1);
   const [matchId, setMatchId] = useState<string | undefined>(routeMatchId);
   const [saving, setSaving] = useState(false);
   const [outputsOpen, setOutputsOpen] = useState(false);
@@ -256,15 +226,15 @@ export const MatchSetupWizardPage: React.FC = () => {
   const [awayRows, setAwayRows] = useState<RosterRow[]>([emptyRow(), emptyRow(), emptyRow(), emptyRow(), emptyRow(), emptyRow()]);
   const [homeLineup, setHomeLineup] = useState<Array<string | null>>([null,null,null,null,null,null]);
   const [awayLineup, setAwayLineup] = useState<Array<string | null>>([null,null,null,null,null,null]);
-  const [selectedPos, setSelectedPos] = useState<{ side: 'A'|'B'; idx: number } | null>(null);
   const [pasteHome, setPasteHome] = useState(''); const [pasteAway, setPasteAway] = useState('');
   const [quickHome, setQuickHome] = useState(''); const [quickAway, setQuickAway] = useState('');
 
   const teamsQ = useQuery({ queryKey: ['teams'], queryFn: teamsApi.list });
   const compsQ = useQuery({ queryKey: ['competitions'], queryFn: competitionsApi.list });
-  const matchesQ = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches });
-  const matchQ = useQuery({ queryKey: ['match', matchId], queryFn: () => matchApi.getMatchById(matchId!), enabled: !!matchId });
-  const readinessQ = useQuery({ queryKey: ['readiness', matchId], queryFn: () => matchApi.getReadiness(matchId!), enabled: !!matchId, refetchInterval: 3000 });
+  const poll = usePollingFallback(20_000);
+  const matchesQ = useQuery({ queryKey: ['matches'], queryFn: matchApi.listMatches, refetchInterval: poll, staleTime: 10_000 });
+  const matchQ = useQuery({ queryKey: ['match', matchId], queryFn: () => matchApi.getMatchById(matchId!), enabled: !!matchId, refetchInterval: poll, staleTime: 10_000 });
+  const readinessQ = useQuery({ queryKey: ['readiness', matchId], queryFn: () => matchApi.getReadiness(matchId!), enabled: !!matchId, refetchInterval: poll, staleTime: 10_000 });
 
   useEffect(() => { if (routeMatchId) setMatchId(routeMatchId); }, [routeMatchId]);
 
@@ -512,6 +482,10 @@ export const MatchSetupWizardPage: React.FC = () => {
     }
     try {
       await lineupApi.set(matchId, side, 1, { players } as any);
+      const teamId = side === 'A' ? form.homeTeamId : form.awayTeamId;
+      if (teamId) {
+        try { localStorage.setItem(`qwesie:last-lineup:${teamId}`, JSON.stringify(assignmentsFromArray(ids))); } catch {}
+      }
       notify.success(`${sideLabel(side)} starting six saved`);
       qc.invalidateQueries({queryKey:['readiness',matchId]});
       qc.invalidateQueries({queryKey:['match',matchId]});
@@ -520,18 +494,28 @@ export const MatchSetupWizardPage: React.FC = () => {
     }
   };
 
-  const assignToSelected = (side:'A'|'B', playerId:string) => {
-    if (!selectedPos || selectedPos.side !== side) return;
-    const arr = side==='A'?[...homeLineup]:[...awayLineup];
-    const existing = arr.indexOf(playerId); if (existing>=0) arr[existing] = arr[selectedPos.idx];
-    arr[selectedPos.idx] = playerId;
-    side==='A'?setHomeLineup(arr):setAwayLineup(arr);
-  };
-
   const sameAsLastSet = (side:'A'|'B') => {
     const m:any = matchQ.data; const team = side==='A'?m?.teams?.A:m?.teams?.B; const lineup = (team?.lineup||[]).map((p:any)=>p.id||null).slice(0,6);
     while (lineup.length<6) lineup.push(null);
     if (side==='A') setHomeLineup(lineup); else setAwayLineup(lineup);
+  };
+
+  const copySavedLineup = (side: 'A'|'B') => {
+    const teamId = side === 'A' ? form.homeTeamId : form.awayTeamId;
+    if (!teamId) return notify.error('Select a team first');
+    try {
+      const raw = localStorage.getItem(`qwesie:last-lineup:${teamId}`);
+      if (!raw) return notify.error('No saved lineup found for this team');
+      const parsed = JSON.parse(raw) as any;
+      const roster = selectedRosterFor(side);
+      const validIds = new Set(roster.map(r => r.playerId || r._key));
+      const arr = [1,2,3,4,5,6].map(i => {
+        const id = parsed?.[i] || parsed?.[String(i)] || null;
+        return id && validIds.has(id) ? id : null;
+      });
+      if (side === 'A') setHomeLineup(arr); else setAwayLineup(arr);
+      notify.success(`${sideLabel(side)} saved lineup loaded`);
+    } catch { notify.error('Failed to load saved lineup'); }
   };
   const swapAB = () => { const h=[...homeLineup]; setHomeLineup([...awayLineup]); setAwayLineup(h); };
 
@@ -637,6 +621,8 @@ export const MatchSetupWizardPage: React.FC = () => {
             saving={saving}
             issuesByRow={rowIssues.A}
             teamHasNoPlayers={teamHasNoPlayers.A}
+            teamColor={teams.find((t:any)=>t.id===form.homeTeamId)?.primaryColor}
+            teamTextColor={teams.find((t:any)=>t.id===form.homeTeamId)?.textColor}
             onLoadTeam={loadTeamRoster}
             onCopyLast={copyLastRoster}
             onSave={saveRoster}
@@ -657,6 +643,8 @@ export const MatchSetupWizardPage: React.FC = () => {
             saving={saving}
             issuesByRow={rowIssues.B}
             teamHasNoPlayers={teamHasNoPlayers.B}
+            teamColor={teams.find((t:any)=>t.id===form.awayTeamId)?.primaryColor}
+            teamTextColor={teams.find((t:any)=>t.id===form.awayTeamId)?.textColor}
             onLoadTeam={loadTeamRoster}
             onCopyLast={copyLastRoster}
             onSave={saveRoster}
@@ -675,30 +663,47 @@ export const MatchSetupWizardPage: React.FC = () => {
       {step===4 && (
         <div className="space-y-4">
           <div className="rounded-lg border border-warning/40 bg-warning-subtle p-3 text-sm text-fg">
-            Save each team&apos;s <span className="font-semibold">Roster</span> (Step 3) before saving a starting six. Then assign all 6 positions and click <span className="font-semibold">Save lineup</span> for Home and Away.
+            Save each team&apos;s <span className="font-semibold">Roster</span> (Step 3) before saving a starting six. Assign all 6 positions on the court diagram, then click <span className="font-semibold">Save lineup</span> for Home and Away.
           </div>
-          <LineupPickerView
-            side="A"
-            roster={selectedRosterFor('A')}
-            lineup={homeLineup}
-            selectedPos={selectedPos}
-            onSameAsLast={sameAsLastSet}
-            onSwap={swapAB}
-            onSave={saveLineup}
-            onSelectPos={setSelectedPos}
-            onAssign={assignToSelected}
-          />
-          <LineupPickerView
-            side="B"
-            roster={selectedRosterFor('B')}
-            lineup={awayLineup}
-            selectedPos={selectedPos}
-            onSameAsLast={sameAsLastSet}
-            onSwap={swapAB}
-            onSave={saveLineup}
-            onSelectPos={setSelectedPos}
-            onAssign={assignToSelected}
-          />
+          {(['A', 'B'] as const).map((side) => {
+            const rosterRows = selectedRosterFor(side);
+            const courtPlayers: CourtPlayer[] = rosterRows.map(r => ({
+              id: r.playerId || r._key,
+              name: r.name || `#${r.jerseyNumber}`,
+              jerseyNumber: r.jerseyNumber || null,
+              photoUrl: r.photoUrl || null,
+              thumbUrl: r.thumbUrl || null,
+              isLibero: !!r.isLibero,
+              position: r.position || null,
+            }));
+            const arr = side === 'A' ? homeLineup : awayLineup;
+            const team = teams.find((t: any) => t.id === (side === 'A' ? form.homeTeamId : form.awayTeamId));
+            const setArr = (next: LineupAssignments) => {
+              const a = assignmentsToArray(next);
+              if (side === 'A') setHomeLineup(a); else setAwayLineup(a);
+            };
+            return (
+              <Card key={side}>
+                <CardHeader>
+                  <CardTitle>{sideLabel(side)} starting six (Set 1)</CardTitle>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => sameAsLastSet(side)}>Same as last set</Button>
+                    <Button variant="outline" size="sm" onClick={() => copySavedLineup(side)}>Copy saved lineup</Button>
+                    {side === 'A' && <Button variant="outline" size="sm" onClick={swapAB}>Swap A/B</Button>}
+                    <Button variant="secondary" size="sm" onClick={() => saveLineup(side)}>Save lineup</Button>
+                  </div>
+                </CardHeader>
+                <CourtDiagram
+                  value={assignmentsFromArray(arr)}
+                  roster={courtPlayers}
+                  onChange={setArr}
+                  teamColor={team?.primaryColor}
+                  teamTextColor={team?.textColor}
+                  title={`${team?.name || sideLabel(side)} - net at top`}
+                />
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -722,6 +727,7 @@ export const MatchSetupWizardPage: React.FC = () => {
               </div>
               <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
                 <Button variant="outline" onClick={()=>setOutputsOpen(true)}><Tv className="w-4 h-4"/>Outputs</Button>
+                {matchId && <Link to={`/matches/${matchId}/team-sheet`}><Button variant="outline"><ClipboardList className="w-4 h-4"/>Team sheet</Button></Link>}
                 <Button variant="secondary" onClick={saveDraftAndStay}><Save className="w-4 h-4"/>Save draft</Button>
                 <Button variant="primary" onClick={goLive} disabled={!readiness?.ready}><Wand2 className="w-4 h-4"/>Go live</Button>
               </div>

@@ -161,7 +161,7 @@ export const BroadcastStudioPage: React.FC = () => {
     };
   }, [matchId, socket, qc]);
 
-  const pollMs = socketHealthy ? false : 4000;
+  const pollMs = socketHealthy ? false : 20000;
   const { data: templates = [] } = useQuery({ queryKey: ['broadcast-templates'], queryFn: broadcastApi.getTemplates });
   const { data: graphicState, refetch: refetchGraphic } = useQuery({
     queryKey: ['broadcast-graphic', matchId],

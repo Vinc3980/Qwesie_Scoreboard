@@ -4,7 +4,7 @@ import { OutputSceneState, legacyScorebugSettingsFromTheme, scorebugThemeConfigF
 import { logger } from '../utils/logger.js';
 import { getResolvedScorebugThemeForMatch } from './scorebugTheme.service.js';
 
-export type GraphicTemplateId = 'MATCH_INTRO'|'TEAM_INTRO'|'STARTING_LINEUP'|'PLAYER_SPOTLIGHT'|'TEAM_COMPARISON'|'MATCH_STATISTICS'|'SET_RESULT'|'MATCH_MOMENTUM'|'TOP_PERFORMERS'|'FINAL_MATCH_RESULT'|'SET_ANALYSIS'|'PLAYER_LEADERBOARD';
+export type GraphicTemplateId = 'MATCH_INTRO'|'TEAM_INTRO'|'STARTING_LINEUP'|'STARTING_SIX_COURT'|'TEAM_SQUAD_PROFILES'|'TEAM_ROSTER_GRID'|'PLAYER_SPOTLIGHT'|'TEAM_COMPARISON'|'MATCH_STATISTICS'|'SET_RESULT'|'MATCH_MOMENTUM'|'TOP_PERFORMERS'|'FINAL_MATCH_RESULT'|'SET_ANALYSIS'|'PLAYER_LEADERBOARD'|'LEADERBOARD'|'FIXTURES'|'PLAYER_LEADERS'|'PLAYER_LEADERS_GRID'|'LEADERBOARD_COMBINED';
 export type BreakType = 'TEAM_A_TIMEOUT'|'TEAM_B_TIMEOUT'|'BETWEEN_SET'|'TECHNICAL_TIMEOUT'|'MATCH_SUSPENSION'|'NONE';
 
 export type GraphicCue = {
@@ -16,7 +16,7 @@ export type GraphicCue = {
 
 type Scene = OutputSceneState['scene'];
 
-const DEFAULT_AUTO = { setBreakSeconds: 20, timeoutSeconds: 30, setBreakEnabled: true, timeoutEnabled: true, finalEnabled: true, midMatchAfterSet: null as number | null, midMatchSeconds: 20 };
+const DEFAULT_AUTO = { setBreakSeconds: 20, timeoutSeconds: 30, setBreakEnabled: true, timeoutEnabled: true, finalEnabled: true, midMatchAfterSet: null as number | null, midMatchSeconds: 20, attributionOnAir: 'off' as 'off' | 'auto' | 'one-click' };
 const pendingTimers = new Map<string, NodeJS.Timeout>();
 
 function clearPendingTimer(matchId: string) {
@@ -27,7 +27,10 @@ function clearPendingTimer(matchId: string) {
 export const GRAPHIC_TEMPLATES: Array<{ id: GraphicTemplateId; name: string; description: string }> = [
   { id: 'MATCH_INTRO', name: 'Match Introduction', description: 'Tournament context, teams, venue, and match opening presentation.' },
   { id: 'TEAM_INTRO', name: 'Team Introduction', description: 'Team-focused identity and roster spotlight before play.' },
+  { id: 'TEAM_SQUAD_PROFILES', name: 'Team Squad Profiles', description: 'Full-screen profile cards, three players at a time.' },
+  { id: 'TEAM_ROSTER_GRID', name: 'Team Roster Grid', description: 'Compact roster list with small photos beside names.' },
   { id: 'STARTING_LINEUP', name: 'Starting Lineup', description: 'Starting six/lineup presentation with positions and jersey numbers.' },
+  { id: 'STARTING_SIX_COURT', name: 'Starting Six Court', description: 'Court diagram with photos and numbers for the set being started.' },
   { id: 'PLAYER_SPOTLIGHT', name: 'Player Spotlight', description: 'Individual player spotlight with contributions and identity.' },
   { id: 'PLAYER_LEADERBOARD', name: 'Player Performance Leaderboard', description: 'Leading scorers, attackers, blockers, servers, defenders and contributions.' },
   { id: 'TEAM_COMPARISON', name: 'Full-screen Team Comparison', description: 'Head-to-head team comparison with detailed statistical breakdown.' },
@@ -37,6 +40,11 @@ export const GRAPHIC_TEMPLATES: Array<{ id: GraphicTemplateId; name: string; des
   { id: 'MATCH_MOMENTUM', name: 'Match Momentum', description: 'Scoring progression, runs, recent sequences and distribution.' },
   { id: 'TOP_PERFORMERS', name: 'Top Performers', description: 'Leaders by key performance categories.' },
   { id: 'FINAL_MATCH_RESULT', name: 'Final Match Result', description: 'Closing graphic with winner, final sets, and match outcome.' },
+  { id: 'LEADERBOARD', name: 'Leaderboard', description: 'Competition standings table, top N, paged if needed.' },
+  { id: 'FIXTURES', name: 'Fixtures', description: 'Today\'s fixtures and recent results.' },
+  { id: 'PLAYER_LEADERS', name: 'Player Leaders', description: 'Top players for one category.' },
+  { id: 'PLAYER_LEADERS_GRID', name: 'Player Leaders Grid', description: 'Multiple player leader categories in a grid.' },
+  { id: 'LEADERBOARD_COMBINED', name: 'Leaderboard Combined', description: 'Standings plus top player categories.' },
 ];
 
 // --- Studio/graphics template API adapters ---
@@ -44,7 +52,11 @@ const TEMPLATE_TO_SCENE: Record<string, Scene> = {
   MATCH_INTRO: 'BREAK_SLATE',
   TEAM_INTRO: 'LINEUPS',
   STARTING_LINEUP: 'LINEUPS',
+  STARTING_SIX_COURT: 'LINEUPS',
+  TEAM_SQUAD_PROFILES: 'LINEUPS',
+  TEAM_ROSTER_GRID: 'LINEUPS',
   PLAYER_SPOTLIGHT: 'PLAYER_SPOTLIGHT',
+  PLAYER_ACTION: 'PLAYER_SPOTLIGHT',
   TEAM_COMPARISON: 'HEAD_TO_HEAD',
   MATCH_STATISTICS: 'MATCH_STATS',
   SET_RESULT: 'SET_BREAK',
@@ -53,6 +65,11 @@ const TEMPLATE_TO_SCENE: Record<string, Scene> = {
   FINAL_MATCH_RESULT: 'FINAL',
   SET_ANALYSIS: 'SET_BREAK',
   PLAYER_LEADERBOARD: 'PLAYER_SPOTLIGHT',
+  LEADERBOARD: 'MATCH_STATS',
+  FIXTURES: 'BREAK_SLATE',
+  PLAYER_LEADERS: 'PLAYER_SPOTLIGHT',
+  PLAYER_LEADERS_GRID: 'MATCH_STATS',
+  LEADERBOARD_COMBINED: 'MATCH_STATS',
   SCOREBUG: 'PLAY',
 };
 
@@ -616,4 +633,268 @@ export async function endBreak(matchId: string) {
   const row = await prisma.broadcastGraphicState.update({ where: { id: prev.id }, data: { payload, version: { increment: 1 } } as any });
   await emitProgram(matchId, row);
   return readGraphicState(matchId);
+}
+
+// ---------------- Intro Sequence Runner ----------------
+type IntroStep = { id: string; template: string; payload: Record<string, any>; durationMs: number; label: string; enabled?: boolean };
+type IntroSequence = {
+  status: 'idle' | 'running' | 'paused' | 'completed';
+  mode: 'direct' | 'preview_take';
+  steps: IntroStep[];
+  index: number;
+  endsAt: string | null;
+  updatedAt: string;
+  version: number;
+};
+
+const sequenceTimers = new Map<string, NodeJS.Timeout>();
+
+function clearSequenceTimer(matchId: string) {
+  const t = sequenceTimers.get(matchId);
+  if (t) { try { clearTimeout(t); } catch {} sequenceTimers.delete(matchId); }
+}
+
+function defaultIntroSequence(): IntroSequence {
+  return { status: 'idle', mode: 'direct', steps: [], index: 0, endsAt: null, updatedAt: new Date().toISOString(), version: 0 };
+}
+
+function normalizeIntroSequence(raw: any): IntroSequence {
+  const base = defaultIntroSequence();
+  if (!raw || typeof raw !== 'object') return base;
+  const steps = Array.isArray(raw.steps) ? raw.steps.map((s: any, i: number) => ({
+    id: String(s?.id || `step-${i + 1}`),
+    template: String(s?.template || 'MATCH_INTRO').toUpperCase(),
+    payload: (s?.payload && typeof s.payload === 'object') ? s.payload : {},
+    durationMs: Math.max(1000, Math.min(120000, Number(s?.durationMs) || 8000)),
+    label: String(s?.label || s?.template || `Step ${i + 1}`),
+    enabled: s?.enabled !== false,
+  })) : [];
+  return {
+    status: ['idle','running','paused','completed'].includes(raw.status) ? raw.status : 'idle',
+    mode: raw.mode === 'preview_take' ? 'preview_take' : 'direct',
+    steps,
+    index: Math.max(0, Math.min(steps.length - 1, Number(raw.index) || 0)),
+    endsAt: raw.endsAt ? String(raw.endsAt) : null,
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : base.updatedAt,
+    version: Number(raw.version) || 0,
+  };
+}
+
+async function readIntroSequenceRow(matchId: string) {
+  const row = await ensureRow(matchId);
+  const payload = (row.payload as any) || {};
+  return { row, seq: normalizeIntroSequence(payload.introSequence) };
+}
+
+async function writeIntroSequence(matchId: string, seq: IntroSequence) {
+  const prev = await ensureRow(matchId);
+  const prevPayload = (prev.payload as any) || {};
+  const nextSeq = { ...seq, updatedAt: new Date().toISOString(), version: (Number(seq.version) || 0) + 1 };
+  const row = await prisma.broadcastGraphicState.update({
+    where: { id: prev.id },
+    data: { payload: { ...prevPayload, introSequence: nextSeq } },
+  });
+  return { row, seq: normalizeIntroSequence((row.payload as any)?.introSequence) };
+}
+
+function activeSteps(seq: IntroSequence) { return seq.steps.filter(s => s.enabled !== false); }
+
+export function buildIntroSequenceSteps(input: { teamARosterSize: number; teamBRosterSize: number; setNumber?: number }): IntroStep[] {
+  const setNumber = Number(input.setNumber) || 1;
+  const sides: Array<{ side: 'A' | 'B'; size: number }> = [{ side: 'A', size: Math.max(0, input.teamARosterSize) }, { side: 'B', size: Math.max(0, input.teamBRosterSize) }];
+  const steps: IntroStep[] = [];
+  steps.push({ id: 'intro', template: 'MATCH_INTRO', payload: {}, durationMs: 8000, label: 'Match intro' });
+  for (const { side, size } of sides) {
+    const pageSize = 3;
+    const pages = Math.max(1, Math.ceil(size / pageSize));
+    for (let i = 0; i < pages; i++) {
+      steps.push({ id: `${side}-profiles-${i + 1}`, template: 'TEAM_SQUAD_PROFILES', payload: { team: side, page: i, pageSize }, durationMs: 8000, label: `Team ${side} profiles ${i + 1}/${pages}` });
+    }
+    steps.push({ id: `${side}-roster`, template: 'TEAM_ROSTER_GRID', payload: { team: side }, durationMs: 8000, label: `Team ${side} roster` });
+    steps.push({ id: `${side}-six`, template: 'STARTING_SIX_COURT', payload: { team: side, setNumber }, durationMs: 8000, label: `Team ${side} starting six` });
+  }
+  return steps;
+}
+
+export async function generateIntroSequence(matchId: string): Promise<IntroSequence> {
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: {
+      homeTeam: { include: { players: { orderBy: [{ jerseyNumber: 'asc' }] } } },
+      awayTeam: { include: { players: { orderBy: [{ jerseyNumber: 'asc' }] } } },
+      matchPlayers: { include: { player: true } },
+    },
+  } as any);
+  if (!match) return defaultIntroSequence();
+  const rosterSize = (side: 'A' | 'B') => {
+    const roster = ((match as any).matchPlayers || []).filter((mp: any) => mp.side === (side === 'A' ? 'HOME' : 'AWAY') && mp.player).map((mp: any) => mp.player);
+    const fallbackRoster = side === 'A' ? ((match as any).homeTeam?.players || []) : ((match as any).awayTeam?.players || []);
+    return (roster.length ? roster : fallbackRoster).length;
+  };
+  const steps = buildIntroSequenceSteps({ teamARosterSize: rosterSize('A'), teamBRosterSize: rosterSize('B'), setNumber: (match as any).currentSetNumber || 1 });
+  return { status: 'idle', mode: 'direct', steps, index: 0, endsAt: null, updatedAt: new Date().toISOString(), version: 0 };
+}
+
+async function applyIntroStep(matchId: string, seq: IntroSequence) {
+  const steps = activeSteps(seq);
+  if (!steps.length) return seq;
+  const step = steps[Math.max(0, Math.min(seq.index, steps.length - 1))];
+  const cue = { template: step.template, payload: step.payload, duration: null, autoReturn: false };
+  if (seq.mode === 'preview_take') {
+    await setPreviewCue(matchId, cue);
+    await takePreviewToProgram(matchId);
+  } else {
+    await applyProgramCue(matchId, cue);
+  }
+  return seq;
+}
+
+function scheduleIntroAdvance(matchId: string, seq: IntroSequence) {
+  clearSequenceTimer(matchId);
+  if (seq.status !== 'running') return;
+  const steps = activeSteps(seq);
+  const step = steps[seq.index];
+  if (!step) return;
+  const endsAt = seq.endsAt ? new Date(seq.endsAt).getTime() : (Date.now() + step.durationMs);
+  const ms = Math.max(0, endsAt - Date.now());
+  const timer = setTimeout(async () => {
+    sequenceTimers.delete(matchId);
+    try {
+      const { seq: cur } = await readIntroSequenceRow(matchId);
+      if (cur.status !== 'running') return;
+      const curSteps = activeSteps(cur);
+      if (cur.index >= curSteps.length - 1) {
+        await writeIntroSequence(matchId, { ...cur, status: 'completed', endsAt: null });
+        await clearProgram(matchId);
+        return;
+      }
+      const nextIdx = cur.index + 1;
+      const nextStep = curSteps[nextIdx];
+      const nextSeq = { ...cur, index: nextIdx, endsAt: new Date(Date.now() + (nextStep?.durationMs || 8000)).toISOString() };
+      await writeIntroSequence(matchId, nextSeq);
+      await applyIntroStep(matchId, nextSeq);
+      scheduleIntroAdvance(matchId, nextSeq);
+    } catch (e) { logger.warn(`Intro sequence advance failed for ${matchId}: ${(e as any)?.message || e}`); }
+  }, ms + 40);
+  timer.unref?.();
+  sequenceTimers.set(matchId, timer);
+}
+
+export async function getIntroSequence(matchId: string) {
+  let { seq } = await readIntroSequenceRow(matchId);
+  // Best-effort recovery: server timer is in-memory; reschedule if running after console refresh/server restart.
+  if (seq.status === 'running' && !sequenceTimers.has(matchId)) {
+    const steps = activeSteps(seq);
+    if (!steps.length) {
+      await writeIntroSequence(matchId, { ...seq, status: 'idle', endsAt: null });
+      seq = (await readIntroSequenceRow(matchId)).seq;
+    } else {
+      const endsAtMs = seq.endsAt ? new Date(seq.endsAt).getTime() : 0;
+      if (endsAtMs && endsAtMs <= Date.now()) {
+        // advance overdue step(s) once; timer chain will continue
+        const nextIdx = Math.min(steps.length - 1, seq.index + 1);
+        if (nextIdx === seq.index) {
+          await writeIntroSequence(matchId, { ...seq, status: 'completed', endsAt: null });
+          await clearProgram(matchId);
+          seq = (await readIntroSequenceRow(matchId)).seq;
+        } else {
+          const nextStep = steps[nextIdx];
+          const nextSeq = { ...seq, index: nextIdx, endsAt: new Date(Date.now() + (nextStep?.durationMs || 8000)).toISOString() };
+          await writeIntroSequence(matchId, nextSeq);
+          await applyIntroStep(matchId, nextSeq);
+          seq = (await readIntroSequenceRow(matchId)).seq;
+          scheduleIntroAdvance(matchId, seq);
+        }
+      } else {
+        if (!seq.endsAt) {
+          const step = steps[seq.index];
+          const nextSeq = { ...seq, endsAt: new Date(Date.now() + (step?.durationMs || 8000)).toISOString() };
+          await writeIntroSequence(matchId, nextSeq);
+          seq = (await readIntroSequenceRow(matchId)).seq;
+        }
+        scheduleIntroAdvance(matchId, seq);
+      }
+    }
+  }
+  const preload: string[] = [];
+  // best-effort preload list from match
+  try {
+    const match = await prisma.match.findUnique({ where: { id: matchId }, include: { homeTeam: { include: { players: true } }, awayTeam: { include: { players: true } }, matchPlayers: { include: { player: true } } } } as any);
+    for (const side of ['homeTeam','awayTeam'] as const) {
+      const t: any = (match as any)?.[side];
+      for (const k of ['logoUrl', 'coachPhotoUrl', 'teamPhotoUrl']) if (t?.[k]) preload.push(String(t[k]));
+      for (const p of (t?.players || [])) { if (p?.photoUrl) preload.push(String(p.photoUrl)); if (p?.thumbUrl) preload.push(String(p.thumbUrl)); }
+    }
+    for (const mp of ((match as any)?.matchPlayers || [])) { const p = mp?.player; if (p?.photoUrl) preload.push(String(p.photoUrl)); if (p?.thumbUrl) preload.push(String(p.thumbUrl)); }
+  } catch {}
+  return { ...seq, preload: Array.from(new Set(preload)).filter(u => /^(https?:\/\/|\/)/.test(u)) };
+}
+
+export async function updateIntroSequence(matchId: string, input: any) {
+  const { seq } = await readIntroSequenceRow(matchId);
+  const next = normalizeIntroSequence({ ...seq, ...input, steps: input.steps ?? seq.steps, mode: input.mode ?? seq.mode });
+  // preserve running state timing unless explicitly changed
+  if (seq.status === 'running' && !input.status) { next.status = 'running'; next.endsAt = seq.endsAt; next.index = seq.index; }
+  await writeIntroSequence(matchId, next);
+  return getIntroSequence(matchId);
+}
+
+export async function startIntroSequence(matchId: string, input: any) {
+  clearSequenceTimer(matchId);
+  let { seq } = await readIntroSequenceRow(matchId);
+  if (!seq.steps.length || input.regenerate) seq = await generateIntroSequence(matchId);
+  if (input.steps) seq = normalizeIntroSequence({ ...seq, ...input, steps: input.steps });
+  if (input.mode) seq.mode = input.mode === 'preview_take' ? 'preview_take' : 'direct';
+  const steps = activeSteps(seq);
+  if (!steps.length) return getIntroSequence(matchId);
+  const index = Math.max(0, Math.min(steps.length - 1, Number(input.index) || 0));
+  const nextSeq: IntroSequence = { ...seq, status: 'running', index, endsAt: new Date(Date.now() + (steps[index]?.durationMs || 8000)).toISOString() };
+  await writeIntroSequence(matchId, nextSeq);
+  await applyIntroStep(matchId, nextSeq);
+  scheduleIntroAdvance(matchId, nextSeq);
+  return getIntroSequence(matchId);
+}
+
+export async function controlIntroSequence(matchId: string, input: any) {
+  const action = String(input?.action || '').toLowerCase();
+  const { seq } = await readIntroSequenceRow(matchId);
+  const steps = activeSteps(seq);
+  if (action === 'stop') {
+    clearSequenceTimer(matchId);
+    await writeIntroSequence(matchId, { ...seq, status: 'idle', endsAt: null, index: 0 });
+    await clearProgram(matchId);
+    return getIntroSequence(matchId);
+  }
+  if (action === 'pause') {
+    clearSequenceTimer(matchId);
+    await writeIntroSequence(matchId, { ...seq, status: 'paused', endsAt: null });
+    return getIntroSequence(matchId);
+  }
+  if (action === 'resume' || action === 'start') {
+    return startIntroSequence(matchId, { index: seq.index, regenerate: false });
+  }
+  if (action === 'next' || action === 'skip') {
+    clearSequenceTimer(matchId);
+    const nextIdx = Math.min(steps.length - 1, seq.index + 1);
+    if (nextIdx === seq.index && seq.index >= steps.length - 1) {
+      await writeIntroSequence(matchId, { ...seq, status: 'completed', endsAt: null });
+      await clearProgram(matchId);
+      return getIntroSequence(matchId);
+    }
+    const nextSeq: IntroSequence = { ...seq, status: 'running', index: nextIdx, endsAt: new Date(Date.now() + (steps[nextIdx]?.durationMs || 8000)).toISOString() };
+    await writeIntroSequence(matchId, nextSeq);
+    await applyIntroStep(matchId, nextSeq);
+    scheduleIntroAdvance(matchId, nextSeq);
+    return getIntroSequence(matchId);
+  }
+  if (action === 'prev' || action === 'previous') {
+    clearSequenceTimer(matchId);
+    const prevIdx = Math.max(0, seq.index - 1);
+    const nextSeq: IntroSequence = { ...seq, status: 'running', index: prevIdx, endsAt: new Date(Date.now() + (steps[prevIdx]?.durationMs || 8000)).toISOString() };
+    await writeIntroSequence(matchId, nextSeq);
+    await applyIntroStep(matchId, nextSeq);
+    scheduleIntroAdvance(matchId, nextSeq);
+    return getIntroSequence(matchId);
+  }
+  return getIntroSequence(matchId);
 }

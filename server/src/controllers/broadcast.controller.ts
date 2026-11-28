@@ -122,4 +122,36 @@ export class BroadcastController {
       send(res, await setAutoTriggers(matchId, req.body || {}), 'Auto-triggers updated');
     } catch (e) { next(e); }
   }
+
+  static async getSequence(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { matchId } = req.params;
+      const { getIntroSequence } = await import('../services/broadcast.service.js');
+      send(res, await getIntroSequence(matchId));
+    } catch (e) { next(e); }
+  }
+
+  static async updateSequence(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { matchId } = req.params;
+      const { updateIntroSequence } = await import('../services/broadcast.service.js');
+      send(res, await updateIntroSequence(matchId, req.body || {}), 'Intro sequence updated');
+    } catch (e) { next(e); }
+  }
+
+  static async startSequence(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { matchId } = req.params;
+      const { startIntroSequence } = await import('../services/broadcast.service.js');
+      send(res, await startIntroSequence(matchId, req.body || {}), 'Intro sequence started');
+    } catch (e) { next(e); }
+  }
+
+  static async controlSequence(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { matchId } = req.params;
+      const { controlIntroSequence } = await import('../services/broadcast.service.js');
+      send(res, await controlIntroSequence(matchId, req.body || {}), 'Intro sequence updated');
+    } catch (e) { next(e); }
+  }
 }

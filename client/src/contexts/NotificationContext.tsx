@@ -4,17 +4,30 @@ import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 
 export type NotificationType = 'success' | 'error' | 'info';
 
+export interface NotificationAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface NotificationOptions {
+  title?: string;
+  action?: NotificationAction;
+  durationMs?: number;
+}
+
 export interface NotificationItem {
   id: string;
   type: NotificationType;
   message: string;
+  title?: string;
+  action?: NotificationAction;
 }
 
 interface NotificationContextValue {
-  showNotification: (type: NotificationType, message: string) => void;
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  showNotification: (type: NotificationType, message: string, opts?: NotificationOptions) => void;
+  success: (message: string, opts?: NotificationOptions) => void;
+  error: (message: string, opts?: NotificationOptions) => void;
+  info: (message: string, opts?: NotificationOptions) => void;
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
@@ -26,18 +39,18 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
-  const showNotification = useCallback((type: NotificationType, message: string) => {
+  const showNotification = useCallback((type: NotificationType, message: string, opts?: NotificationOptions) => {
     const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    setNotifications((prev) => [...prev, { id, type, message }]);
+    setNotifications((prev) => [...prev, { id, type, message, title: opts?.title, action: opts?.action }]);
 
     setTimeout(() => {
       removeNotification(id);
-    }, 4000);
+    }, opts?.durationMs ?? 4000);
   }, [removeNotification]);
 
-  const success = useCallback((msg: string) => showNotification('success', msg), [showNotification]);
-  const error = useCallback((msg: string) => showNotification('error', msg), [showNotification]);
-  const info = useCallback((msg: string) => showNotification('info', msg), [showNotification]);
+  const success = useCallback((msg: string, opts?: NotificationOptions) => showNotification('success', msg, opts), [showNotification]);
+  const error = useCallback((msg: string, opts?: NotificationOptions) => showNotification('error', msg, opts), [showNotification]);
+  const info = useCallback((msg: string, opts?: NotificationOptions) => showNotification('info', msg, opts), [showNotification]);
 
   return (
     <NotificationContext.Provider value={{ showNotification, success, error, info }}>
@@ -63,7 +76,19 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
                 {n.type === 'success' && <CheckCircle2 className="w-5 h-5 text-success shrink-0 mt-0.5" aria-hidden="true" />}
                 {n.type === 'error' && <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />}
                 {n.type === 'info' && <Info className="w-5 h-5 text-info shrink-0 mt-0.5" aria-hidden="true" />}
-                <span className="text-fg break-words">{n.message}</span>
+                <div className="min-w-0">
+                  {n.title && <div className="font-semibold text-fg">{n.title}</div>}
+                  <div className="text-fg break-words">{n.message}</div>
+                  {n.action && (
+                    <button
+                      type="button"
+                      onClick={() => { n.action?.onClick(); removeNotification(n.id); }}
+                      className="mt-1 text-xs font-semibold underline text-accent hover:text-accent/80"
+                    >
+                      {n.action.label}
+                    </button>
+                  )}
+                </div>
               </div>
               <button
                 onClick={() => removeNotification(n.id)}

@@ -7,25 +7,34 @@ import { CurrentMatchProvider, useCurrentMatch } from './contexts/CurrentMatchCo
 import { RouteErrorBoundary } from './components/RouteErrorBoundary.js';
 
 // Public/overlay routes (kept free of console layout/code)
-import { ScorebugPage } from './pages/ScorebugPage.js';
-import { BroadcastGraphicsPage } from './pages/BroadcastGraphicsPage.js';
-import { OverlayPreviewPage } from './pages/OverlayPreviewPage.js';
-import { BroadcastKitPage } from './pages/dev/BroadcastKitPage.js';
-import IdentityPage from './pages/dev/IdentityPage.js';
-import { CourtOutputPage } from './pages/CourtOutputPage.js';
-import { LoginPage } from './pages/LoginPage.js';
+const ScorebugPage = lazy(() => import('./pages/ScorebugPage.js').then(m => ({ default: m.ScorebugPage })));
+const BroadcastGraphicsPage = lazy(() => import('./pages/BroadcastGraphicsPage.js').then(m => ({ default: m.BroadcastGraphicsPage })));
+const OverlayPreviewPage = lazy(() => import('./pages/OverlayPreviewPage.js').then(m => ({ default: m.OverlayPreviewPage })));
+const BroadcastKitPage = lazy(() => import('./pages/dev/BroadcastKitPage.js').then(m => ({ default: m.BroadcastKitPage })));
+const IdentityPage = lazy(() => import('./pages/dev/IdentityPage.js'));
+const CourtOutputPage = lazy(() => import('./pages/CourtOutputPage.js').then(m => ({ default: m.CourtOutputPage })));
+const LoginPage = lazy(() => import('./pages/LoginPage.js').then(m => ({ default: m.LoginPage })));
 
 // Console routes (code-split)
 const RootLayout = lazy(() => import('./layouts/RootLayout.js').then(m => ({ default: m.RootLayout })));
 const OverviewPage = lazy(() => import('./pages/OverviewPage.js').then(m => ({ default: m.OverviewPage })));
 const MatchesPage = lazy(() => import('./pages/MatchesPage.js').then(m => ({ default: m.MatchesPage })));
 const MatchSetupWizardPage = lazy(() => import('./pages/MatchSetupWizardPage.js').then(m => ({ default: m.MatchSetupWizardPage })));
+const TeamSheetPage = lazy(() => import('./pages/TeamSheetPage.js').then(m => ({ default: m.TeamSheetPage })));
 const LiveControlPage = lazy(() => import('./pages/LiveControlPage.js').then(m => ({ default: m.LiveControlPage })));
 const LiveControlClassicPage = lazy(() => import('./pages/LiveControlClassicPage.js').then(m => ({ default: m.LiveControlClassicPage })));
 const ScorebugDesignerPage = lazy(() => import('./pages/ScorebugDesignerPage.js').then(m => ({ default: m.ScorebugDesignerPage })));
 const TeamsPage = lazy(() => import('./pages/TeamsPage.js').then(m => ({ default: m.TeamsPage })));
 const PlayersPage = lazy(() => import('./pages/PlayersPage.js').then(m => ({ default: m.PlayersPage })));
 const CompetitionsPage = lazy(() => import('./pages/CompetitionsPage.js').then(m => ({ default: m.CompetitionsPage })));
+const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage.js').then(m => ({ default: m.LeaderboardPage })));
+const FixturesPage = lazy(() => import('./pages/FixturesPage.js').then(m => ({ default: m.FixturesPage })));
+const PublicStandingsPage = lazy(() => import('./pages/PublicStandingsPage.js').then(m => ({ default: m.PublicStandingsPage })));
+const PublicFixturesPage = lazy(() => import('./pages/PublicFixturesPage.js').then(m => ({ default: m.PublicFixturesPage })));
+const LeaderboardHubPage = lazy(() => import('./pages/LeaderboardHubPage.js').then(m => ({ default: m.LeaderboardHubPage })));
+const LeaderboardDesignerPage = lazy(() => import('./pages/LeaderboardDesignerPage.js').then(m => ({ default: m.LeaderboardDesignerPage })));
+const PublicPlayerLeaderboardPage = lazy(() => import('./pages/PublicPlayerLeaderboardPage.js').then(m => ({ default: m.PublicPlayerLeaderboardPage })));
+const PublicCombinedLeaderboardPage = lazy(() => import('./pages/PublicCombinedLeaderboardPage.js').then(m => ({ default: m.PublicCombinedLeaderboardPage })));
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage.js').then(m => ({ default: m.StatisticsPage })));
 const MatchArchivePage = lazy(() => import('./pages/MatchArchivePage.js').then(m => ({ default: m.MatchArchivePage })));
 const ReportsPage = lazy(() => import('./pages/ReportsPage.js').then(m => ({ default: m.ReportsPage })));
@@ -40,7 +49,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
+      staleTime: 15_000,
+      gcTime: 5 * 60_000,
       refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
     },
   },
 });
@@ -79,7 +91,7 @@ function AuthRedirector() {
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {
-    const isPublic = location.pathname.startsWith('/out/') || location.pathname.startsWith('/overlay') || location.pathname.startsWith('/broadcast/') || location.pathname.startsWith('/dev') || location.pathname === '/login' || location.pathname === '/forgot-password' || location.pathname === '/reset-password';
+    const isPublic = location.pathname.startsWith('/out/') || location.pathname.startsWith('/overlay') || location.pathname.startsWith('/broadcast/') || location.pathname.startsWith('/dev') || location.pathname.startsWith('/p/') || location.pathname === '/login' || location.pathname === '/forgot-password' || location.pathname === '/reset-password';
     if (authRequired && !isPublic && !user) {
       try { sessionStorage.setItem('qwesie.auth.toast401', '1'); } catch {}
       clearAuthRequired();
@@ -116,6 +128,9 @@ function RoutedApp() {
           <Route path="/broadcast/:matchId/graphics" element={<BroadcastGraphicsPage />} />
           <Route path="/broadcast/:matchId/match-introduction" element={<BroadcastGraphicsPage />} />
           <Route path="/broadcast/:matchId/starting-lineup" element={<BroadcastGraphicsPage />} />
+          <Route path="/broadcast/:matchId/starting-six-court" element={<BroadcastGraphicsPage />} />
+          <Route path="/broadcast/:matchId/team-squad-profiles" element={<BroadcastGraphicsPage />} />
+          <Route path="/broadcast/:matchId/team-roster-grid" element={<BroadcastGraphicsPage />} />
           <Route path="/broadcast/:matchId/player-spotlight" element={<BroadcastGraphicsPage />} />
           <Route path="/broadcast/:matchId/team-comparison" element={<BroadcastGraphicsPage />} />
           <Route path="/broadcast/:matchId/match-statistics" element={<BroadcastGraphicsPage />} />
@@ -126,6 +141,10 @@ function RoutedApp() {
           <Route path="/dev/identity" element={<IdentityPage />} />
           <Route path="/out/court/:court" element={<CourtOutputPage />} />
           <Route path="/out/court/:court/:mode" element={<CourtOutputPage />} />
+          <Route path="/p/:competitionId/standings" element={<PublicStandingsPage />} />
+          <Route path="/p/:competitionId/fixtures" element={<PublicFixturesPage />} />
+          <Route path="/p/:competitionId/leaderboard/players" element={<PublicPlayerLeaderboardPage />} />
+          <Route path="/p/:competitionId/leaderboard/combined" element={<PublicCombinedLeaderboardPage />} />
 
           <Route path="/" element={<RequireAuth><RootLayout /></RequireAuth>}>
             <Route index element={<Navigate to="/overview" replace />} />
@@ -133,6 +152,7 @@ function RoutedApp() {
             <Route path="matches" element={<MatchesPage />} />
             <Route path="matches/new" element={<MatchSetupWizardPage />} />
             <Route path="matches/:id/setup" element={<MatchSetupWizardPage />} />
+            <Route path="matches/:id/team-sheet" element={<TeamSheetPage />} />
             <Route path="live" element={<LiveControlPage />} />
             <Route path="live/:id" element={<LiveControlPage />} />
             <Route path="live-classic" element={<LiveControlClassicPage />} />
@@ -141,6 +161,10 @@ function RoutedApp() {
             <Route path="teams" element={<TeamsPage />} />
             <Route path="players" element={<PlayersPage />} />
             <Route path="competitions" element={<CompetitionsPage />} />
+            <Route path="leaderboard" element={<LeaderboardPage />} />
+            <Route path="leaderboards" element={<LeaderboardHubPage />} />
+            <Route path="design/leaderboard" element={<LeaderboardDesignerPage />} />
+            <Route path="fixtures" element={<FixturesPage />} />
             <Route path="statistics" element={<StatisticsPage />} />
             <Route path="broadcast" element={<BroadcastConsoleRedirect />} />
             <Route path="archive" element={<MatchArchivePage />} />

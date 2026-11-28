@@ -91,7 +91,7 @@ function resolveTheme(settings: ScorebugSettings): ScorebugThemeConfig {
   return scorebugThemeConfigFromLegacy(settings);
 }
 
-export const ScorebugOverlay: React.FC<{
+const ScorebugOverlayInner: React.FC<{
   match: any;
   settings: ScorebugSettings;
   status?: string | null;
@@ -226,7 +226,7 @@ export const ScorebugOverlay: React.FC<{
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: anchor.includes('right') ? 'flex-end' : anchor.includes('center') ? 'center' : 'flex-start', gap: 0 }}>
         <div style={{ display: 'flex', alignItems: 'stretch', height: rowHeight, background: theme.colors.background, border: `${theme.shape.borderWidth}px solid ${theme.shape.borderColor}`, boxShadow: shadowFor(theme.shape.shadow), overflow: 'hidden', maxWidth: '100%', borderRadius: shape.preset !== 'slanted' ? radius : 0, gap: shape.blockGap }}>
           {sponsor && theme.content.sponsorSlot === 'left' ? (
-            <div style={{ width: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.12)', borderRight: `1px solid ${theme.shape.borderColor}` }}><img src={theme.content.sponsorLogoUrl!} alt="Sponsor" style={{ maxWidth: 74, maxHeight: 52, objectFit: 'contain' }} /></div>
+            <div style={{ width: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.12)', borderRight: `1px solid ${theme.shape.borderColor}` }}><img src={theme.content.sponsorLogoUrl!} alt="Sponsor" loading="lazy" decoding="async" style={{ maxWidth: 74, maxHeight: 52, objectFit: 'contain' }} /></div>
           ) : null}
           {tournament ? (
             <div style={{ width: logoBlockW, flex: '0 0 auto', display: 'flex', alignItems: 'center', padding: '0 12px', gap: 10, background: 'rgba(0,0,0,0.18)', borderRight: `1px solid ${theme.shape.borderColor}`, overflow: 'hidden', minWidth: 0 }}>
@@ -240,7 +240,7 @@ export const ScorebugOverlay: React.FC<{
             <div style={{ width: setBadgeW, flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.colors.setBadgeBackground, color: theme.colors.setBadgeText, fontSize: theme.typography.labelSize, fontWeight: theme.typography.weight, letterSpacing: '0.08em', borderLeft: `1px solid ${theme.shape.borderColor}`, fontFamily: theme.typography.fontFamily }}>{setLabel}</div>
           ) : null}
           {sponsor && theme.content.sponsorSlot === 'right' ? (
-            <div style={{ width: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.12)', borderLeft: `1px solid ${theme.shape.borderColor}` }}><img src={theme.content.sponsorLogoUrl!} alt="Sponsor" style={{ maxWidth: 74, maxHeight: 52, objectFit: 'contain' }} /></div>
+            <div style={{ width: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.12)', borderLeft: `1px solid ${theme.shape.borderColor}` }}><img src={theme.content.sponsorLogoUrl!} alt="Sponsor" loading="lazy" decoding="async" style={{ maxWidth: 74, maxHeight: 52, objectFit: 'contain' }} /></div>
           ) : null}
         </div>
 
@@ -273,4 +273,7 @@ export const ScorebugOverlay: React.FC<{
   );
 };
 
+// The scorebug re-renders on every match state push; memoizing keeps it from
+// redrawing when unrelated console state changes.
+export const ScorebugOverlay = React.memo(ScorebugOverlayInner);
 export default ScorebugOverlay;

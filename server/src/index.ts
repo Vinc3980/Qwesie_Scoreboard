@@ -4,22 +4,32 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import cors from 'cors';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
-import { initSocketServer } from './sockets/socketManager.js';
+import { initSocketServer, closeSocketServer } from './sockets/socketManager.js';
 import { authenticate, ensureDevUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { perfMiddleware } from './middleware/perf.js';
 import { apiRouter } from './routes/index.js';
 import { startBackupScheduler } from './utils/backup.js';
+import { startKeepWarm, stopKeepWarm } from './utils/keepWarm.js';
 
 const app = express();
 const server = http.createServer(app);
 
-// Render/Railway/Fly terminate TLS at their proxy. Trust one hop so req.protocol,
-// req.secure, req.ip and password-reset links use the public HTTPS origin.
-app.set('trust proxy', 1);
+// Render/Railway/Fly terminate TLS at their proxy. Trust one hop (configurable)
+// so req.protocol, req.secure, req.ip and password-reset links use the public
+// HTTPS origin.
+const trustProxy = /^\d+$/.test(env.TRUST_PROXY) ? Number(env.TRUST_PROXY) : env.TRUST_PROXY;
+app.set('trust proxy', trustProxy as any);
+
+// Keep-alive above Render's 60s idle timeout so sockets are reused instead of
+// re-handshaking (TLS handshake to a cold instance is a large part of p95).
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 
 const isProd = env.NODE_ENV === 'production';
 const serveClient = env.SERVE_CLIENT ?? isProd;
@@ -93,9 +103,14 @@ const corsOrigin = allowAllOrigins
     };
 
 app.use(cors({ origin: corsOrigin as any, credentials: !allowAllOrigins }));
+// Compress JSON API responses, HTML and SVG. Hashed JS/CSS are already small
+// per chunk and are served with immutable caching; compression still helps on
+// first load. Threshold avoids burning CPU on tiny payloads.
+app.use(compression({ threshold: 1024, level: 6 }));
 
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+app.use(perfMiddleware);
 
 // Rate limiting: tighten on auth routes only (login/bootstrap/reset flows and auth mutations).
 // Other API routes may have their own protections; avoid a broad mutating limiter that can interfere with match operations.
@@ -122,11 +137,21 @@ app.use('/api/v1/auth/forgot-password', authRateLimit(10, 60_000));
 app.use('/api/v1/auth/reset-password', authRateLimit(15, 60_000));
 app.use('/api/v1/auth/change-password', authRateLimit(20, 60_000));
 app.use('/api/v1/auth', authRateLimit(120, 60_000)); // general cap for other auth routes
+app.use('/api/v1/uploads', authRateLimit(30, 60_000)); // image uploads: ADMIN/SCORER only, rate limited
 
-// static uploads (local/offline)
-const uploadsPath = path.isAbsolute(env.UPLOADS_DIR) ? env.UPLOADS_DIR : path.resolve(process.cwd(), env.UPLOADS_DIR);
-fs.mkdirSync(uploadsPath, { recursive: true });
-app.use('/uploads', express.static(uploadsPath));
+// static uploads (local/offline dev). In production, object storage serves images;
+// never write to local disk.
+if (env.STORAGE_DRIVER === 'local') {
+  const uploadsPath = path.isAbsolute(env.UPLOADS_DIR) ? env.UPLOADS_DIR : path.resolve(process.cwd(), env.UPLOADS_DIR);
+  fs.mkdirSync(uploadsPath, { recursive: true });
+  app.use('/uploads', express.static(uploadsPath, {
+    maxAge: '7d',
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  }));
+}
 
 // Request logging middleware
 app.use((req, _res, next) => {
@@ -196,9 +221,23 @@ async function printStartupInfo(port: number) {
 if (serveClient) {
   const clientDist = resolveClientDist();
   if (fs.existsSync(clientDist)) {
-    app.use(express.static(clientDist));
+    app.use(express.static(clientDist, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        const rel = path.relative(clientDist, filePath).replace(/\\/g, '/');
+        if (/[.-][A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|ttf|otf|png|jpg|jpeg|svg|webp|avif)$/i.test(rel)) {
+          // Vite emits content-hashed filenames: safe to cache forever.
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (rel === 'index.html' || rel.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
+      },
+    }));
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/socket.io')) return next();
+      res.setHeader('Cache-Control', 'no-cache');
       return res.sendFile(path.join(clientDist, 'index.html'));
     });
     logger.info(`Serving client from ${clientDist}`);
@@ -239,6 +278,7 @@ async function start() {
       logger.info(`REST API base path: http://localhost:${env.PORT}/api/v1`);
       void printStartupInfo(env.PORT);
       startBackupScheduler();
+      startKeepWarm();
       void import('./services/broadcast.service.js').then(m => m.recoverBroadcastTimers?.()).catch((e) => logger.warn(`Broadcast recovery skipped: ${(e as Error)?.message || e}`));
     });
   } catch (error) {
@@ -248,9 +288,22 @@ async function start() {
 }
 
 const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+let shuttingDown = false;
 signals.forEach((signal) => {
   process.on(signal, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info(`Received ${signal}. Shutting down gracefully...`);
+    stopKeepWarm();
+    // Force-exit if Render's grace period expires while a client keeps a
+    // socket or a slow request open.
+    const force = setTimeout(() => process.exit(1), 10_000);
+    force.unref();
+    try {
+      await closeSocketServer();
+    } catch (e) {
+      logger.warn(`Socket.IO close failed: ${(e as Error)?.message || e}`);
+    }
     server.close(async () => {
       await disconnectDatabase();
       logger.info('HTTP and Socket.IO servers closed.');

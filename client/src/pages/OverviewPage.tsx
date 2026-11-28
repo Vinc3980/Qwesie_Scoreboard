@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePollingFallback } from '../hooks/useSocketHealthy.js';
 import { useNavigate } from 'react-router-dom';
 import { Activity, CalendarClock, CheckCircle2, Circle, Plus, ArrowRight, Tv, Radio, Trophy, ClipboardCheck } from 'lucide-react';
-import { broadcastApi, matchApi, systemApi } from '../services/api.js';
+import { broadcastApi, competitionsApi, matchApi, systemApi } from '../services/api.js';
 import { PageHeader } from '../components/ui/PageHeader.js';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card.js';
 import { Button } from '../components/ui/Button.js';
@@ -25,6 +26,7 @@ export const OverviewPage: React.FC = () => {
   const qc = useQueryClient();
   const { currentMatchId, currentMatch, matches, setCurrentMatchId } = useCurrentMatch();
   const [conflict, setConflict] = useState<{ court: string; conflict: CourtConflict } | null>(null);
+  const poll = usePollingFallback(20_000);
 
   const targetMatch = useMemo(() => {
     if (currentMatch) return currentMatch;
@@ -36,12 +38,19 @@ export const OverviewPage: React.FC = () => {
   }, [currentMatch, matches]);
 
   const matchId = targetMatch?.id || null;
+  const compsQ = useQuery({ queryKey: ['competitions'], queryFn: competitionsApi.list, staleTime: 60_000 });
+  const firstCompId = compsQ.data?.[0]?.id;
+  const todayStart = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d.toISOString(); }, []);
+  const todayEnd = useMemo(() => { const d = new Date(); d.setHours(23,59,59,999); return d.toISOString(); }, []);
+  const todayFxQ = useQuery({ queryKey: ['overview-fixtures', firstCompId, todayStart], queryFn: () => competitionsApi.fixtures(firstCompId!, { from: todayStart, to: todayEnd, limit: 6 }), enabled: !!firstCompId, refetchInterval: poll ?? 30000 });
+  const miniLbQ = useQuery({ queryKey: ['overview-standings', firstCompId], queryFn: () => competitionsApi.standings(firstCompId!, {}), enabled: !!firstCompId, refetchInterval: poll ?? 60000 });
 
   const { data: fullMatch } = useQuery({
     queryKey: ['match', matchId],
     queryFn: () => matchApi.getMatchById(matchId!),
     enabled: !!matchId,
-    refetchInterval: 5000,
+    refetchInterval: poll,
+    staleTime: 10_000,
   });
   const m: any = fullMatch || targetMatch || null;
 
@@ -49,18 +58,21 @@ export const OverviewPage: React.FC = () => {
     queryKey: ['readiness', matchId],
     queryFn: () => matchApi.getReadiness(matchId!),
     enabled: !!matchId,
-    refetchInterval: 5000,
+    refetchInterval: poll,
+    staleTime: 10_000,
   });
   const { data: scene } = useQuery({
     queryKey: ['broadcast-scene', matchId],
     queryFn: () => broadcastApi.getSceneState(matchId!),
     enabled: !!matchId,
-    refetchInterval: 4000,
+    refetchInterval: poll,
+    staleTime: 10_000,
   });
   const { data: sysInfo } = useQuery({
     queryKey: ['system-info'],
     queryFn: systemApi.info,
-    refetchInterval: 4000,
+    refetchInterval: poll,
+    staleTime: 10_000,
   });
 
   const createQuick = useMutation({
@@ -209,12 +221,43 @@ export const OverviewPage: React.FC = () => {
             <CardHeader><CardTitle>Shortcuts</CardTitle><Trophy className="w-4 h-4 text-warning" /></CardHeader>
             <div className="grid grid-cols-1 gap-2">
               {m && <Button variant="outline" onClick={() => navigate(`/live/${m.id}`)}>Live Control</Button>}
+              {m && <Button variant="outline" onClick={() => navigate(`/matches/${m.id}/team-sheet`)}><ClipboardCheck className="w-4 h-4" /> Team sheet</Button>}
               <Button variant="outline" onClick={() => navigate('/matches')}>Matches</Button>
               <Button variant="outline" onClick={() => navigate('/teams')}>Teams & players</Button>
               <Button variant="outline" onClick={() => navigate('/statistics')}>Statistics</Button>
             </div>
           </Card>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader><CardTitle>Today's fixtures</CardTitle><Button size="sm" variant="outline" onClick={() => navigate('/fixtures')}>All fixtures</Button></CardHeader>
+          <div className="space-y-2">
+            {(todayFxQ.data?.items || []).slice(0,5).map((m:any) => (
+              <div key={m.id} className="flex items-center gap-2 text-sm p-2 rounded border border-border bg-surface-sunken/40">
+                <span className="w-14 text-xs text-fg-muted">{m.scheduledAt ? new Date(m.scheduledAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '--:--'}</span>
+                <span className="flex-1 truncate font-medium">{m.homeTeam?.shortName||m.homeTeamName} <span className="text-fg-muted">{(m.status==='COMPLETED'||m.status==='LIVE')?`${m.setsWonHome}-${m.setsWonAway}`:'vs'}</span> {m.awayTeam?.shortName||m.awayTeamName}</span>
+                <Badge variant={statusVariant(m.status)}>{m.status}</Badge>
+              </div>
+            ))}
+            {!todayFxQ.isLoading && !(todayFxQ.data?.items||[]).length && <div className="text-sm text-fg-subtle">No fixtures today.</div>}
+          </div>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Mini leaderboard</CardTitle><Button size="sm" variant="outline" onClick={() => navigate('/leaderboard')}>Full leaderboard</Button></CardHeader>
+          <div className="space-y-1">
+            {(miniLbQ.data?.rows || []).slice(0,5).map((r:any) => (
+              <div key={r.teamId} className="flex items-center gap-2 text-sm py-1.5 border-b border-border/50 last:border-0">
+                <span className="w-6 font-semibold text-fg-muted">{r.rank}</span>
+                <span className="flex-1 truncate">{r.teamName}</span>
+                <span className="text-fg-muted">{r.played}P</span>
+                <span className="font-bold w-8 text-right">{r.matchPoints}</span>
+              </div>
+            ))}
+            {!miniLbQ.isLoading && !(miniLbQ.data?.rows||[]).length && <div className="text-sm text-fg-subtle">No standings yet.</div>}
+          </div>
+        </Card>
       </div>
 
       <CourtConflictDialog

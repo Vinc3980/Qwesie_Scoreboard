@@ -3,7 +3,7 @@ export const SETS_TO_WIN = 3;
 export const TIMEOUTS_PER_SET = 2;
 export const EVENT_LIMIT = 50;
 
-export const SCORING_ACTIONS = ['KILL', 'ACE', 'BLOCK'] as const;
+export const SCORING_ACTIONS = ['KILL', 'ACE', 'BLOCK', 'POINT'] as const;
 export const NON_SCORING_ACTIONS = ['DIG', 'ASSIST'] as const;
 export const OPPONENT_SCORING_ACTIONS = ['ATTACK ERROR'] as const;
 

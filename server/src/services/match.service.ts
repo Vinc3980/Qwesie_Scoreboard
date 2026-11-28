@@ -1,11 +1,23 @@
-import { prisma } from '../config/database.js';
-import { MatchState, TeamId, MatchSetupInput, MatchInfoInput, MatchStatus, MatchFlags, TeamMatchState, PlayerOnCourt, SetHistoryItem, MatchRosterEntryInput, MatchReadiness, ReadinessChecklistItem, StartSetInput } from '@qwesie/shared';
+import { prisma, withDbRetry } from '../config/database.js';
+import { MatchState, MatchStatePatch, MatchEventData, TeamId, MatchSetupInput, MatchInfoInput, MatchStatus, MatchFlags, TeamMatchState, PlayerOnCourt, SetHistoryItem, MatchRosterEntryInput, MatchReadiness, ReadinessChecklistItem, StartSetInput, applyMatchStatePatch } from '@qwesie/shared';
 import { ACTION_STAT_MAP, SCORING_ACTIONS, DEFAULT_TEAMS, DEFAULT_TOURNAMENT, DEFAULT_DIVISION, DEFAULT_COURT, DEFAULT_MATCH_NO, parseBulkPlayerRows } from '@qwesie/shared';
 import { normalizeCourt } from '../utils/court.js';
 import { setCourtOnAir } from '../controllers/court.controller.js';
 import { AppError } from '../utils/errors.js';
-import { broadcastMatchState, broadcastMatchSnapshot } from '../sockets/socketManager.js';
+import { logger } from '../utils/logger.js';
+import { resolveStoredUrl } from '../storage/index.js';
+import { broadcastMatchState, broadcastMatchSnapshot, broadcastMatchStatePatch } from '../sockets/socketManager.js';
 import { onMatchEventCommitted } from './broadcast.service.js';
+import { invalidateStandingsCache } from './standings.service.js';
+import {
+  getCachedMatchState,
+  getOrLoadMatchState,
+  peekCachedMatchState,
+  setCachedMatchState,
+  invalidateMatchState,
+  updateCachedMatchState,
+  scheduleMatchStateRefresh,
+} from './matchStateCache.js';
 
 type Side = 'HOME' | 'AWAY';
 type Tx = any;
@@ -292,10 +304,93 @@ export class MatchService {
   }
 
   static async listMatches(): Promise<MatchState[]> {
-    const matches = await prisma.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, select: { id: true } });
-    const out: MatchState[] = [];
-    for (const m of matches) out.push(await this.getMatchState(m.id));
-    return out;
+    // Lightweight summaries: the console list only needs identity/status/teams,
+    // not the full event/roster/lineup graph. This used to call getMatchState()
+    // once per match (N+1), i.e. hundreds of queries on every 5s poll.
+    const rows = await withDbRetry(() => prisma.match.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true, status: true, winnerSide: true, currentSetNumber: true, bestOfSets: true,
+        setsToWin: true, regularSetPoints: true, finalSetPoints: true, minPointDifference: true,
+        rallyScoring: true, timeoutsPerSet: true, substitutionsPerSet: true, confirmSetEnd: true,
+        servingSide: true, setsWonHome: true, setsWonAway: true, revision: true,
+        tournamentName: true, division: true, court: true, venueType: true,
+        competitionId: true, tournamentId: true, matchNumber: true, scheduledAt: true,
+        startedAt: true, endedAt: true, createdAt: true, homeTeamName: true, awayTeamName: true,
+        homeTeam: { select: { id: true, name: true, shortName: true, logoUrl: true, logoKey: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true } },
+        awayTeam: { select: { id: true, name: true, shortName: true, logoUrl: true, logoKey: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true } },
+        sets: { select: { setNumber: true, homePoints: true, awayPoints: true, winnerSide: true, pendingEnd: true }, orderBy: { setNumber: 'asc' } },
+        _count: { select: { rosters: true } },
+      },
+    }), 'listMatches');
+
+    const teamFromSide = (side: 'HOME' | 'AWAY' | null | undefined): TeamId => (side === 'AWAY' ? 'B' : 'A');
+    const emptyTeam = (name: string, team: any, sets: number, score: number): TeamMatchState => ({
+      id: team?.id,
+      name: team?.name || name,
+      shortName: team?.shortName || name.slice(0, 4).toUpperCase(),
+      logoUrl: resolveStoredUrl(team?.logoKey) || resolveStoredUrl(team?.logoUrl) || null,
+      primaryColor: team?.primaryColor || null,
+      secondaryColor: team?.secondaryColor || null,
+      textColor: team?.textColor || null,
+      score,
+      sets,
+      timeouts: 0,
+      timeoutsUsed: 0,
+      timeoutsPerSet: 2,
+      substitutionsUsed: 0,
+      substitutionsPerSet: 6,
+      stats: { kill: 0, error: 0, ace: 0, block: 0, dig: 0, assist: 0, side_out: 0 },
+      lineup: [],
+      bench: [],
+      rotationOrder: [null, null, null, null, null, null],
+      serverPosition: null,
+    } as TeamMatchState);
+
+    return rows.map((m: any) => {
+      const cur = m.sets.find((s: any) => s.setNumber === m.currentSetNumber) || m.sets[0];
+      const setScoresA = Array.from({ length: 5 }, (_, i) => m.sets.find((s: any) => s.setNumber === i + 1)?.homePoints ?? 0);
+      const setScoresB = Array.from({ length: 5 }, (_, i) => m.sets.find((s: any) => s.setNumber === i + 1)?.awayPoints ?? 0);
+      return {
+        id: m.id,
+        status: m.status,
+        winner: m.winnerSide ? teamFromSide(m.winnerSide) : null,
+        teams: {
+          A: emptyTeam(m.homeTeamName || 'HOME TEAM', m.homeTeam, m.setsWonHome || 0, cur?.homePoints || 0),
+          B: emptyTeam(m.awayTeamName || 'AWAY TEAM', m.awayTeam, m.setsWonAway || 0, cur?.awayPoints || 0),
+        },
+        current_set: m.currentSetNumber,
+        max_sets: m.bestOfSets,
+        set_scores: { A: setScoresA, B: setScoresB },
+        setHistory: m.sets.map((s: any) => ({ number: s.setNumber, scoreA: s.homePoints, scoreB: s.awayPoints, winner: s.winnerSide ? teamFromSide(s.winnerSide) : null, pendingEnd: !!s.pendingEnd })),
+        server: teamFromSide(m.servingSide),
+        tournament: m.tournamentName || '',
+        division: m.division || '',
+        court: m.court || '',
+        venueType: m.venueType || null,
+        competitionId: m.competitionId || null,
+        tournamentId: m.tournamentId || null,
+        match_no: m.matchNumber || '',
+        match_date: m.scheduledAt ? new Date(m.scheduledAt).toISOString().slice(0, 10) : '',
+        scheduledAt: m.scheduledAt ? new Date(m.scheduledAt).toISOString() : null,
+        referee1: '',
+        referee2: '',
+        started_at: m.startedAt ? new Date(m.startedAt).toISOString() : '',
+        ended_at: m.endedAt ? new Date(m.endedAt).toISOString() : null,
+        createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : null,
+        server_time: new Date().toISOString(),
+        events: [],
+        flags: { setPoint: null, matchPoint: null, setWon: null, matchWon: null, pendingEnd: false, courtSwitchDue: false, isDecidingSet: false, technicalTimeoutDue: false },
+        revision: m.revision,
+        lastEvent: null,
+        rules: {
+          bestOfSets: m.bestOfSets, setsToWin: m.setsToWin, regularSetPoints: m.regularSetPoints,
+          finalSetPoints: m.finalSetPoints, minPointDifference: m.minPointDifference, rallyScoring: m.rallyScoring,
+          timeoutsPerSet: m.timeoutsPerSet, substitutionsPerSet: m.substitutionsPerSet, confirmSetEnd: m.confirmSetEnd !== false,
+        },
+      } as MatchState;
+    });
   }
 
   // ---------- readiness / go-live ----------
@@ -308,11 +403,9 @@ export class MatchService {
     checklist.push({ key: 'teams', ok: homeSet && awaySet, message: homeSet && awaySet ? 'Both teams are set' : 'Both teams must be set' });
 
     const sides: Side[] = ['HOME', 'AWAY'];
-    let rostersOk = true; let lineupsOk = true;
     for (const side of sides) {
       const roster = match.rosters.filter(r => r.side === side);
       const rosterOk = roster.length >= 6;
-      if (!rosterOk) rostersOk = false;
       checklist.push({ key: `roster_${side}`, ok: rosterOk, message: rosterOk ? `${side} roster has ${roster.length} players` : `${side} roster must have at least 6 players` });
       const lineup = match.lineups.filter(l => l.side === side && l.setNumber === 1).sort((a,b)=>a.rotationPos-b.rotationPos);
       const positions = lineup.map(l => l.rotationPos);
@@ -320,15 +413,117 @@ export class MatchService {
       const lineupRosterIds = new Set(roster.map(r => r.playerId));
       const playersValid = lineup.length === 6 && uniqPos.size === 6 && positions.every(p => p >= 1 && p <= 6) && lineup.every(l => lineupRosterIds.has(l.playerId));
       const liberosInLineup = lineup.filter(l => roster.find(r => r.playerId === l.playerId)?.isLibero).length;
-      const liberoOk = liberosInLineup <= 1; // "at most 1 libero per lineup"
-      const ok = playersValid && liberoOk;
-      if (!ok) lineupsOk = false;
+      const ok = playersValid && liberosInLineup <= 1;
       checklist.push({ key: `lineup_${side}_set1`, ok, message: ok ? `${side} has a valid starting six for set 1` : `${side} must have a valid starting six for set 1 (6 rostered players, positions 1-6, max 1 libero)` });
     }
 
     const ready = checklist.every(c => c.ok);
     const canGoLive = ready && !['LIVE','COMPLETED','CANCELLED'].includes(match.status);
     return { matchId, ready, canGoLive, checklist };
+  }
+
+  static async getTeamSheet(matchId: string) {
+    const m: any = await prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        id: true, matchNumber: true, scheduledAt: true, court: true, venueType: true, currentSetNumber: true,
+        competition: { select: { name: true } },
+        tournament: { select: { name: true } },
+        tournamentName: true, division: true,
+        homeTeam: { select: { id: true, name: true, shortName: true, logoKey: true, logoUrl: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true, coachName: true, coachPhotoKey: true, assistantCoachName: true, managerName: true, teamPhotoKey: true } },
+        awayTeam: { select: { id: true, name: true, shortName: true, logoKey: true, logoUrl: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true, coachName: true, coachPhotoKey: true, assistantCoachName: true, managerName: true, teamPhotoKey: true } },
+        homeTeamName: true, awayTeamName: true,
+        officials: { select: { role: true, fullName: true } },
+        sets: { select: { setNumber: true, status: true, homePoints: true, awayPoints: true, winnerSide: true }, orderBy: { setNumber: 'asc' } },
+        rosters: {
+          select: {
+            side: true, jerseyNumber: true, isCaptain: true, isLibero: true, isActive: true,
+            player: { select: { id: true, displayName: true, firstName: true, lastName: true, position: true, photoKey: true, thumbKey: true, photoUrl: true } },
+          },
+        },
+        lineups: {
+          select: {
+            side: true, setNumber: true, rotationPos: true, playerId: true,
+            player: { select: { id: true, displayName: true, firstName: true, lastName: true, jerseyNumber: true, position: true, photoKey: true, thumbKey: true, photoUrl: true } },
+          },
+          orderBy: [{ setNumber: 'asc' }, { rotationPos: 'asc' }],
+        },
+      },
+    });
+    if (!m) throw new AppError('Match not found', 404);
+
+    const photo = (p: any) => {
+      const url = resolveStoredUrl(p?.photoKey) || resolveStoredUrl(p?.photoUrl) || null;
+      const thumb = resolveStoredUrl(p?.thumbKey) || url;
+      return { photoUrl: url, thumbUrl: thumb };
+    };
+    const teamSheet = (side: Side) => {
+      const team = side === 'HOME' ? m.homeTeam : m.awayTeam;
+      const fallbackName = side === 'HOME' ? m.homeTeamName : m.awayTeamName;
+      const roster = m.rosters.filter((r: any) => r.side === side).map((r: any) => {
+        const ph = photo(r.player);
+        return {
+          playerId: r.player?.id,
+          jerseyNumber: r.jerseyNumber,
+          name: r.player?.displayName || `${r.player?.firstName || ''} ${r.player?.lastName || ''}`.trim(),
+          position: r.player?.position || null,
+          isCaptain: !!r.isCaptain,
+          isLibero: !!r.isLibero,
+          photoUrl: ph.photoUrl, thumbUrl: ph.thumbUrl,
+        };
+      }).sort((a: any, b: any) => (a.jerseyNumber ?? 999) - (b.jerseyNumber ?? 999));
+      const lineupRows = m.lineups.filter((l: any) => l.side === side);
+      const setNumbers = Array.from(new Set<number>(lineupRows.map((l: any) => Number(l.setNumber)))).sort((a, b) => a - b);
+      const sets = setNumbers.map((sn) => {
+        const slots = lineupRows.filter((l: any) => l.setNumber === sn).sort((a: any, b: any) => a.rotationPos - b.rotationPos).map((l: any) => {
+          const ph = photo(l.player);
+          return {
+            rotationPos: l.rotationPos,
+            playerId: l.playerId,
+            jerseyNumber: roster.find((r: any) => r.playerId === l.playerId)?.jerseyNumber ?? l.player?.jerseyNumber ?? null,
+            name: l.player?.displayName || `${l.player?.firstName || ''} ${l.player?.lastName || ''}`.trim(),
+            photoUrl: ph.photoUrl, thumbUrl: ph.thumbUrl,
+          };
+        });
+        return { setNumber: sn, slots };
+      });
+      const logoUrl = resolveStoredUrl(team?.logoKey) || resolveStoredUrl(team?.logoUrl) || null;
+      const coachPhotoUrl = resolveStoredUrl(team?.coachPhotoKey) || null;
+      const teamPhotoUrl = resolveStoredUrl(team?.teamPhotoKey) || null;
+      return {
+        side: side === 'HOME' ? 'A' : 'B',
+        teamId: team?.id || null,
+        name: team?.name || fallbackName || (side === 'HOME' ? 'Home' : 'Away'),
+        shortName: team?.shortName || null,
+        logoUrl,
+        primaryColor: team?.primaryColor || null,
+        secondaryColor: team?.secondaryColor || null,
+        textColor: team?.textColor || null,
+        coachName: team?.coachName || null,
+        coachPhotoUrl,
+        assistantCoachName: team?.assistantCoachName || null,
+        managerName: team?.managerName || null,
+        teamPhotoUrl,
+        roster,
+        setLineups: sets,
+      };
+    };
+
+    const firstRef = m.officials.find((o: any) => /1/.test(String(o.role)))?.fullName || m.officials[0]?.fullName || null;
+    const secondRef = m.officials.find((o: any) => /2/.test(String(o.role)))?.fullName || m.officials[1]?.fullName || null;
+    return {
+      matchId: m.id,
+      matchNumber: m.matchNumber || null,
+      scheduledAt: m.scheduledAt?.toISOString?.() || m.scheduledAt || null,
+      competition: m.competition?.name || m.tournamentName || null,
+      division: m.division || null,
+      court: m.court || null,
+      venueType: m.venueType || null,
+      referee1: firstRef,
+      referee2: secondRef,
+      sets: m.sets.map((s: any) => ({ setNumber: s.setNumber, status: s.status, homePoints: s.homePoints, awayPoints: s.awayPoints, winnerSide: s.winnerSide })),
+      teams: { A: teamSheet('HOME'), B: teamSheet('AWAY') },
+    };
   }
 
   static async goLive(matchId: string): Promise<MatchState> {
@@ -421,7 +616,8 @@ export class MatchService {
       await tx.startingLineup.deleteMany({ where: { matchId, side, playerId: { notIn: Array.from(validIds) } } });
       await this.bumpRevision(tx, matchId);
     });
-    return this.getMatchState(matchId);
+    invalidateMatchState(matchId);
+    return this.getMatchState(matchId, { force: true });
   }
 
   static async getRoster(matchId: string, sideParam: string) {
@@ -480,7 +676,8 @@ export class MatchService {
       }
       await this.bumpRevision(tx, matchId);
     });
-    return this.getMatchState(matchId);
+    invalidateMatchState(matchId);
+    return this.getMatchState(matchId, { force: true });
   }
 
   static async ensureDefaultLineupForSet(tx: Tx, matchId: string, side: Side, setNumber: number) {
@@ -503,51 +700,122 @@ export class MatchService {
   // ---------- mutations with idempotency ----------
   static async changeScore(matchId: string, team: TeamId, delta: 1 | -1 = 1, opts?: { clientEventId?: string; actorUserId?: string }): Promise<MatchState> {
     const outcome = await prisma.$transaction(async (tx) => {
-      if (await this.ensureIdempotent(tx, matchId, opts?.clientEventId)) return { idempotent: true, setCompleted: false, matchCompleted: false };
+      if (await this.ensureIdempotent(tx, matchId, opts?.clientEventId)) return { idempotent: true as const };
       const match = await this.requireMatch(tx, matchId);
-      let setCompleted = false; let matchCompleted = false;
+      let result: any;
+      let correctionAsUndo = false;
       if (delta > 0) {
-        const r = await this.applyPoint(tx, match, team, 'MANUAL', undefined, opts);
-        setCompleted = !!r.setCompleted; matchCompleted = !!r.matchCompleted;
+        result = await this.applyPoint(tx, match, team, 'MANUAL', undefined, opts);
       } else {
-        await this.applyCorrectionPoint(tx, match, team, opts);
+        const side = sideFromTeam(team);
+        const last = await tx.matchEvent.findFirst({ where: { matchId, isReversal: false, type: { notIn: ['UNDO','NOTE'] as any } }, orderBy: { sequenceNumber: 'desc' } });
+        const lastScoringTeam = (() => {
+          if (!last) return null;
+          if (last.type === 'POINT_AWARDED') return last.teamSide as Side | null;
+          if (last.type === 'ACTION_RECORDED') {
+            const action = String((last.payload as any)?.action || '').toUpperCase();
+            if (['KILL','ACE','BLOCK','POINT'].includes(action)) return last.teamSide as Side | null;
+            if (action === 'ATTACK_ERROR') return last.teamSide ? otherSide(last.teamSide as Side) : null;
+          }
+          return null;
+        })();
+        if (last && lastScoringTeam === side) {
+          await this.reverseEvent(tx, matchId, last, opts);
+          const undoEvt = await this.createEvent(tx, matchId, { type: 'UNDO', payload: { targetEventId: last.id, targetType: last.type, reason: 'MANUAL_MINUS_ONE' }, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null, correctsEventId: last.id, isReversal: true });
+          correctionAsUndo = true;
+          const updatedMatch = await tx.match.findUnique({ where: { id: matchId }, include: { sets: true } });
+          const set = updatedMatch?.sets.find((s: any) => s.setNumber === updatedMatch.currentSetNumber);
+          result = { set, setNumber: set?.setNumber, setCompleted: false, matchCompleted: false, pendingEnd: !!(set as any)?.pendingEnd, event: undoEvt, winnerSide: undefined, setsWonHome: updatedMatch?.setsWonHome ?? 0, setsWonAway: updatedMatch?.setsWonAway ?? 0, nextSetNumber: undefined };
+        } else {
+          result = await this.applyCorrectionPoint(tx, match, team, opts);
+        }
       }
-      await this.bumpRevision(tx, matchId);
-      return { idempotent: false, setCompleted, matchCompleted };
+      const revision = await this.bumpRevision(tx, matchId);
+      return { idempotent: false as const, match, result, revision, correctionAsUndo };
     });
     if (outcome.idempotent) return this.getMatchState(matchId);
-    await onMatchEventCommitted(matchId, outcome.matchCompleted ? 'MATCH_COMPLETED' : outcome.setCompleted ? 'SET_COMPLETED' : 'POINT_AWARDED');
-    return this.emitAndGet(matchId);
+    const { match, result, revision, correctionAsUndo } = outcome;
+
+    if (correctionAsUndo || delta < 0) {
+      await onMatchEventCommitted(matchId, 'UNDO');
+      return this.emitAndGet(matchId);
+    }
+    // Fast path: patch the cached state and emit a compact delta so the point
+    // is visible immediately. The authoritative rebuild (stats, events,
+    // lineups, flags) follows on a short debounce.
+    const sets = this.applyResultToSets(match, result);
+    const status: MatchStatus = result?.matchCompleted
+      ? 'COMPLETED'
+      : result?.setCompleted
+        ? 'BETWEEN_SETS'
+        : 'LIVE';
+    const patch = this.buildScorePatch({
+      match,
+      sets,
+      revision,
+      status,
+      currentSetNumber: result?.setCompleted && !result?.matchCompleted ? result.nextSetNumber : match.currentSetNumber,
+      servingSide: ((result?.winnerSide || sideFromTeam(team)) as Side),
+      setsWonHome: result?.setsWonHome ?? match.setsWonHome ?? 0,
+      setsWonAway: result?.setsWonAway ?? match.setsWonAway ?? 0,
+      winnerSide: result?.matchCompleted ? result.winnerSide : null,
+      lastEvent: result?.event ? this.mapEvent(result.event) : null,
+    });
+    const state = this.emitScorePatchAndGet(patch, match.court);
+    if (result?.matchCompleted && (match as any).competitionId) invalidateStandingsCache((match as any).competitionId);
+    this.queueSideEffect(matchId, result?.matchCompleted ? 'MATCH_COMPLETED' : result?.setCompleted ? 'SET_COMPLETED' : 'POINT_AWARDED');
+    return state ?? this.getMatchState(matchId, { force: true });
   }
 
-  static async recordAction(matchId: string, team: TeamId, action: string, opts?: { clientEventId?: string; actorUserId?: string; playerId?: string }): Promise<MatchState> {
+  static async recordAction(matchId: string, team: TeamId, action: string, opts?: { clientEventId?: string; actorUserId?: string; playerId?: string; assistPlayerId?: string }): Promise<MatchState> {
     const actionUpper = action.toUpperCase();
     const statKey = ACTION_STAT_MAP[actionUpper];
     const outcome = await prisma.$transaction(async (tx) => {
-      if (await this.ensureIdempotent(tx, matchId, opts?.clientEventId)) return { idempotent: true, setCompleted: false, matchCompleted: false };
+      if (await this.ensureIdempotent(tx, matchId, opts?.clientEventId)) return { idempotent: true as const };
       const match = await this.requireMatch(tx, matchId);
       if (match.status === 'COMPLETED' || match.status === 'CANCELLED') throw new AppError('Match is not active', 400);
       if (['SCHEDULED','READY','BETWEEN_SETS','PAUSED','SUSPENDED'].includes(match.status)) {
         await tx.match.update({ where: { id: matchId }, data: { status: 'LIVE', startedAt: match.startedAt || new Date() } });
+        match.status = 'LIVE';
       }
       const side = sideFromTeam(team);
-      await this.createEvent(tx, matchId, { type: 'ACTION_RECORDED', teamSide: side, payload: { action: actionUpper, playerId: opts?.playerId || null }, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null });
+      const recorded = await this.createEvent(tx, matchId, { type: 'ACTION_RECORDED', teamSide: side, payload: { action: actionUpper, playerId: opts?.playerId || null, assistPlayerId: opts?.assistPlayerId || null }, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null });
       if (statKey) await this.applyTeamPlayerStat(tx, matchId, side, statKey, 1, opts?.playerId);
-      let setCompleted = false; let matchCompleted = false;
+      if (opts?.assistPlayerId && actionUpper === 'KILL') await this.applyTeamPlayerStat(tx, matchId, side, 'assist', 1, opts.assistPlayerId);
+      let result: any = null;
+      let scoringTeam: TeamId | null = null;
       if (SCORING_ACTIONS.includes(actionUpper as any)) {
-        const r = await this.applyPoint(tx, match, team, actionUpper, opts?.playerId, { ...opts, clientEventId: undefined });
-        setCompleted = setCompleted || !!r.setCompleted; matchCompleted = matchCompleted || !!r.matchCompleted;
+        scoringTeam = team;
+        result = await this.applyPoint(tx, match, team, actionUpper, opts?.playerId, { ...opts, clientEventId: undefined });
       }
       if (actionUpper === 'ATTACK_ERROR') {
-        const r = await this.applyPoint(tx, match, otherTeam(team), actionUpper, undefined, { ...opts, clientEventId: undefined });
-        setCompleted = setCompleted || !!r.setCompleted; matchCompleted = matchCompleted || !!r.matchCompleted;
+        scoringTeam = otherTeam(team);
+        result = await this.applyPoint(tx, match, scoringTeam, actionUpper, undefined, { ...opts, clientEventId: undefined });
       }
-      await this.bumpRevision(tx, matchId);
-      return { idempotent: false, setCompleted, matchCompleted };
+      const revision = await this.bumpRevision(tx, matchId);
+      return { idempotent: false as const, match, result, revision, recorded, scoringTeam };
     });
     if (outcome.idempotent) return this.getMatchState(matchId);
-    await onMatchEventCommitted(matchId, outcome.matchCompleted ? 'MATCH_COMPLETED' : outcome.setCompleted ? 'SET_COMPLETED' : 'ACTION_RECORDED');
-    return this.emitAndGet(matchId);
+    const { match, result, revision, recorded, scoringTeam } = outcome;
+
+    const sets = this.applyResultToSets(match, result);
+    const status: MatchStatus = result?.matchCompleted ? 'COMPLETED' : result?.setCompleted ? 'BETWEEN_SETS' : 'LIVE';
+    const patch = this.buildScorePatch({
+      match,
+      sets,
+      revision,
+      status,
+      currentSetNumber: result?.setCompleted && !result?.matchCompleted ? result.nextSetNumber : match.currentSetNumber,
+      servingSide: (result?.winnerSide || (scoringTeam ? sideFromTeam(scoringTeam) : (match.servingSide as Side))) as Side,
+      setsWonHome: result?.setsWonHome ?? match.setsWonHome ?? 0,
+      setsWonAway: result?.setsWonAway ?? match.setsWonAway ?? 0,
+      winnerSide: result?.matchCompleted ? result.winnerSide : null,
+      lastEvent: this.mapEvent(result?.event || recorded),
+    });
+    const state = this.emitScorePatchAndGet(patch, match.court);
+    if (result?.matchCompleted && (match as any).competitionId) invalidateStandingsCache((match as any).competitionId);
+    this.queueSideEffect(matchId, result?.matchCompleted ? 'MATCH_COMPLETED' : result?.setCompleted ? 'SET_COMPLETED' : 'ACTION_RECORDED');
+    return state ?? this.getMatchState(matchId, { force: true });
   }
 
   static async callTimeout(matchId: string, team: TeamId, opts?: { clientEventId?: string; actorUserId?: string }): Promise<MatchState> {
@@ -610,6 +878,78 @@ export class MatchService {
     return this.emitAndGet(matchId);
   }
 
+  static async attributeEvent(matchId: string, eventId: string, body: { playerId?: string | null; assistPlayerId?: string | null }, actorUserId?: string): Promise<MatchState> {
+    await prisma.$transaction(async (tx) => {
+      const ev = await tx.matchEvent.findFirst({ where: { id: eventId, matchId } });
+      if (!ev) throw new AppError('Event not found', 404);
+      if (ev.isReversal) throw new AppError('Cannot attribute a reversal event', 400);
+      const payload = { ...(ev.payload as any || {}) };
+      const oldPlayerId = payload.playerId || null;
+      const oldAssist = payload.assistPlayerId || null;
+      const newPlayerId = body.playerId === undefined ? oldPlayerId : (body.playerId || null);
+      const newAssist = body.assistPlayerId === undefined ? oldAssist : (body.assistPlayerId || null);
+      const side = ev.teamSide as Side | null;
+      if (!side) throw new AppError('Event has no team side', 400);
+      const action = String(payload.action || '').toUpperCase();
+
+      const applyDelta = async (playerId: string | null, field: string, delta: number) => {
+        if (!playerId || !field || !delta) return;
+        await tx.teamMatchStatistics.update({ where: { matchId_side: { matchId, side } }, data: { [field]: { increment: delta } } as any }).catch(() => {});
+        await this.ensurePlayerStats(tx, matchId, playerId, side);
+        await tx.playerMatchStatistics.update({ where: { matchId_playerId: { matchId, playerId } }, data: { [field]: { increment: delta } } as any }).catch(() => {});
+      };
+
+      if (ev.type === 'ACTION_RECORDED') {
+        const statKey = ACTION_STAT_MAP[action];
+        const fieldMap: Record<string,string> = { kill:'kills', error:'errors', ace:'aces', block:'blocks', dig:'digs', assist:'assists' };
+        const dbField = statKey ? (fieldMap[statKey] || statKey) : null;
+        if (dbField && oldPlayerId !== newPlayerId) {
+          await applyDelta(oldPlayerId, dbField, -1);
+          await applyDelta(newPlayerId, dbField, 1);
+        }
+        if (action === 'KILL' && oldAssist !== newAssist) {
+          await applyDelta(oldAssist, 'assists', -1);
+          await applyDelta(newAssist, 'assists', 1);
+        }
+        const impliedScoring = SCORING_ACTIONS.includes(action as any) || action === 'ATTACK_ERROR';
+        if (impliedScoring) {
+          const pointSide = action === 'ATTACK_ERROR' ? otherSide(side) : side;
+          const pointEvent = await tx.matchEvent.findFirst({
+            where: { matchId, type: 'POINT_AWARDED', teamSide: pointSide, sequenceNumber: { gte: ev.sequenceNumber } },
+            orderBy: { sequenceNumber: 'asc' },
+          });
+          if (pointEvent) {
+            const pp = { ...(pointEvent.payload as any || {}) };
+            const oldP = pp.playerId || null;
+            if (oldP !== newPlayerId && action !== 'ATTACK_ERROR') {
+              if (oldP) await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: oldP }, data: { points: { decrement: 1 } } as any }).catch(() => {});
+              if (newPlayerId) { await this.ensurePlayerStats(tx, matchId, newPlayerId, pointSide); await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: newPlayerId }, data: { points: { increment: 1 } } as any }).catch(() => {}); }
+              pp.playerId = newPlayerId;
+              await tx.matchEvent.update({ where: { id: pointEvent.id }, data: { payload: pp as any } });
+            }
+          }
+        }
+        payload.playerId = newPlayerId;
+        payload.assistPlayerId = newAssist;
+        await tx.matchEvent.update({ where: { id: ev.id }, data: { payload: payload as any } });
+      } else if (ev.type === 'POINT_AWARDED') {
+        if (oldPlayerId !== newPlayerId) {
+          if (oldPlayerId) await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: oldPlayerId }, data: { points: { decrement: 1 } } as any }).catch(() => {});
+          if (newPlayerId) { await this.ensurePlayerStats(tx, matchId, newPlayerId, side); await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: newPlayerId }, data: { points: { increment: 1 } } as any }).catch(() => {}); }
+          payload.playerId = newPlayerId;
+          await tx.matchEvent.update({ where: { id: ev.id }, data: { payload: payload as any } });
+        }
+      } else {
+        throw new AppError('Only action/point events can be attributed', 400);
+      }
+
+      await this.createEvent(tx, matchId, { type: 'NOTE', teamSide: side, payload: { kind: 'ATTRIBUTION', eventId, playerId: newPlayerId, assistPlayerId: newAssist }, actorUserId: actorUserId || null });
+      await this.bumpRevision(tx, matchId);
+    });
+    await onMatchEventCommitted(matchId, 'ATTRIBUTION');
+    return this.emitAndGet(matchId);
+  }
+
   // ---------- core mutation internals ----------
   private static async requireMatch(tx: Tx, matchId: string) {
     const match = await tx.match.findUnique({ where: { id: matchId }, include: { sets: true } });
@@ -652,16 +992,18 @@ export class MatchService {
     await tx.teamMatchStatistics.update({ where: { matchId_side: { matchId: match.id, side: scoringSide } }, data: { points: { increment: 1 } } });
     if (playerId) { await this.ensurePlayerStats(tx, match.id, playerId, scoringSide); await tx.playerMatchStatistics.update({ where: { matchId_playerId: { matchId: match.id, playerId } }, data: { points: { increment: 1 } } }); }
     await tx.match.update({ where: { id: match.id }, data: { servingSide: scoringSide, status: 'LIVE' } });
-    await this.createEvent(tx, match.id, { setId: set.id, type: 'POINT_AWARDED', teamSide: scoringSide, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null, payload: { cause, team: scoringTeam, playerId: playerId || null, homePoints: updatedSet.homePoints, awayPoints: updatedSet.awayPoints } });
+    const pointEvent = await this.createEvent(tx, match.id, { setId: set.id, type: 'POINT_AWARDED', teamSide: scoringSide, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null, payload: { cause, team: scoringTeam, playerId: playerId || null, homePoints: updatedSet.homePoints, awayPoints: updatedSet.awayPoints } });
 
     const winner = this.isSetWon(updatedSet.homePoints, updatedSet.awayPoints, updatedSet.targetPoints, updatedSet.minDifference);
     if (winner && (match as any).confirmSetEnd !== false) {
       await this.safeUpdate(tx, 'matchSet', { where: { id: set.id }, data: { pendingEnd: true } as any });
       (updatedSet as any).pendingEnd = true;
-      return { set: updatedSet, setNumber: updatedSet.setNumber, setCompleted: false, matchCompleted: false, pendingEnd: true };
+      return { set: updatedSet, setNumber: updatedSet.setNumber, setCompleted: false, matchCompleted: false, pendingEnd: true, event: pointEvent, winnerSide: winner, setsWonHome: match.setsWonHome, setsWonAway: match.setsWonAway, nextSetNumber: undefined };
     }
-    const completion = winner ? await this.completeSet(tx, match, updatedSet, winner) : { setCompleted: false, matchCompleted: false };
-    return { set: updatedSet, setNumber: updatedSet.setNumber, ...completion };
+    const completion = winner
+      ? await this.completeSet(tx, match, updatedSet, winner)
+      : { setCompleted: false, matchCompleted: false, setsWonHome: match.setsWonHome, setsWonAway: match.setsWonAway, nextSetNumber: undefined };
+    return { set: updatedSet, setNumber: updatedSet.setNumber, pendingEnd: false, event: pointEvent, winnerSide: winner, ...completion };
   }
 
   private static isSetWon(home: number, away: number, target: number, minDiff: number): Side | null {
@@ -669,7 +1011,7 @@ export class MatchService {
     return null;
   }
 
-  private static async completeSet(tx: Tx, match: any, set: any, winnerSide: Side): Promise<{ setCompleted: boolean; matchCompleted: boolean }> {
+  private static async completeSet(tx: Tx, match: any, set: any, winnerSide: Side): Promise<{ setCompleted: boolean; matchCompleted: boolean; setsWonHome: number; setsWonAway: number; nextSetNumber?: number }> {
     await this.safeUpdate(tx, 'matchSet', { where: { id: set.id }, data: { status: 'COMPLETED', winnerSide, pendingEnd: false } as any });
     const setsWonHome = winnerSide === 'HOME' ? match.setsWonHome + 1 : match.setsWonHome;
     const setsWonAway = winnerSide === 'AWAY' ? match.setsWonAway + 1 : match.setsWonAway;
@@ -677,7 +1019,7 @@ export class MatchService {
     if (setsWonHome >= match.setsToWin || setsWonAway >= match.setsToWin) {
       await tx.match.update({ where: { id: match.id }, data: { status: 'COMPLETED', winnerSide, setsWonHome, setsWonAway, endedAt: new Date() } });
       await this.createEvent(tx, match.id, { setId: set.id, type: 'MATCH_COMPLETED', teamSide: winnerSide, payload: { setsWonHome, setsWonAway } });
-      return { setCompleted: true, matchCompleted: true };
+      return { setCompleted: true, matchCompleted: true, setsWonHome, setsWonAway };
     }
     const nextSetNumber = set.setNumber + 1;
     await this.ensureDefaultLineupForSet(tx, match.id, 'HOME', nextSetNumber);
@@ -685,7 +1027,7 @@ export class MatchService {
     await tx.match.update({ where: { id: match.id }, data: { status: 'BETWEEN_SETS', currentSetNumber: nextSetNumber, setsWonHome, setsWonAway, servingSide: winnerSide } });
     await tx.matchSet.updateMany({ where: { matchId: match.id, setNumber: nextSetNumber }, data: { status: 'READY', servingSide: winnerSide } });
     await this.createEvent(tx, match.id, { type: 'MATCH_STATUS_CHANGED', payload: { status: 'BETWEEN_SETS', nextSetNumber } });
-    return { setCompleted: true, matchCompleted: false };
+    return { setCompleted: true, matchCompleted: false, setsWonHome, setsWonAway, nextSetNumber };
   }
 
   private static async applyCorrectionPoint(tx: Tx, match: any, team: TeamId, opts?: any) {
@@ -694,10 +1036,13 @@ export class MatchService {
     if (!set) throw new AppError('Current set not found', 500);
     const points = side === 'HOME' ? set.homePoints : set.awayPoints;
     if (points <= 0) throw new AppError('No points to remove.', 400);
-    if (set.status === 'COMPLETED' || match.status === 'COMPLETED') throw new AppError('Use undo/correction workflow for completed set/match.', 400);
-    await tx.matchSet.update({ where: { id: set.id }, data: side === 'HOME' ? { homePoints: { decrement: 1 } } : { awayPoints: { decrement: 1 } } });
+    if (set.status === 'COMPLETED' || match.status === 'COMPLETED' || (set as any).pendingEnd) {
+      throw new AppError('Set is complete or pending end. Use Undo end of set instead.', 400);
+    }
+    const updatedSet = await tx.matchSet.update({ where: { id: set.id }, data: side === 'HOME' ? { homePoints: { decrement: 1 } } : { awayPoints: { decrement: 1 } } });
     await tx.teamMatchStatistics.update({ where: { matchId_side: { matchId: match.id, side } }, data: { points: { decrement: 1 } } });
-    await this.createEvent(tx, match.id, { setId: set.id, type: 'CORRECTION', teamSide: side, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null, payload: { delta: -1, team } });
+    const event = await this.createEvent(tx, match.id, { setId: set.id, type: 'CORRECTION', teamSide: side, actorUserId: opts?.actorUserId || null, clientEventId: opts?.clientEventId || null, payload: { delta: -1, team, kind: 'MANUAL_SCORE_CORRECTION' } });
+    return { set: updatedSet, setNumber: set.setNumber, setCompleted: false, matchCompleted: false, pendingEnd: !!(updatedSet as any).pendingEnd, event, winnerSide: undefined, setsWonHome: match.setsWonHome, setsWonAway: match.setsWonAway, nextSetNumber: undefined };
   }
 
   private static async reverseEvent(tx: Tx, matchId: string, ev: any, _opts?: any) {
@@ -729,6 +1074,10 @@ export class MatchService {
       if (dbField) {
         await tx.teamMatchStatistics.update({ where: { matchId_side: { matchId, side } }, data: { [dbField]: { decrement: 1 } } as any }).catch(()=>{});
         if (payload.playerId) await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: payload.playerId }, data: { [dbField]: { decrement: 1 } } as any }).catch(()=>{});
+      }
+      if (payload.assistPlayerId && action === 'KILL') {
+        await tx.teamMatchStatistics.update({ where: { matchId_side: { matchId, side } }, data: { assists: { decrement: 1 } } as any }).catch(()=>{});
+        await tx.playerMatchStatistics.updateMany({ where: { matchId, playerId: payload.assistPlayerId }, data: { assists: { decrement: 1 } } as any }).catch(()=>{});
       }
       const impliedScoring = SCORING_ACTIONS.includes(action as any) || action === 'ATTACK_ERROR';
       if (impliedScoring) {
@@ -870,9 +1219,13 @@ export class MatchService {
 
   static async setStatus(matchId: string, status: MatchStatus, reason?: string): Promise<MatchState> {
     if (status === 'LIVE') return this.goLive(matchId);
+    let competitionId: string | null = null;
+    let prevStatus: string | null = null;
     await prisma.$transaction(async (tx) => {
       const match = await tx.match.findUnique({ where: { id: matchId } });
       if (!match) throw new AppError('Match not found', 404);
+      competitionId = (match as any).competitionId || null;
+      prevStatus = String((match as any).status);
       const dbStatus = status === 'FINISHED' ? 'COMPLETED' : status;
       const ended = dbStatus === 'COMPLETED' || dbStatus === 'CANCELLED';
       await tx.match.update({ where: { id: matchId }, data: { status: dbStatus as any, ...(ended ? { endedAt: new Date() } : {}) } });
@@ -882,6 +1235,9 @@ export class MatchService {
       }
       await this.bumpRevision(tx, matchId);
     });
+    if (competitionId && (prevStatus === 'COMPLETED' || status === 'COMPLETED' || status === 'FINISHED' || status === 'CANCELLED' || prevStatus === 'CANCELLED')) {
+      invalidateStandingsCache(competitionId);
+    }
     await onMatchEventCommitted(matchId, 'MATCH_STATUS_CHANGED');
     return this.emitAndGet(matchId);
   }
@@ -914,52 +1270,187 @@ export class MatchService {
     };
   }
 
-  static async getMatchState(matchId: string): Promise<MatchState> {
-    const match = await prisma.match.findUnique({
-      where: { id: matchId },
-      include: {
-        homeTeam: true, awayTeam: true, competition: true, tournament: true,
-        sets: { orderBy: { setNumber: 'asc' } },
-        events: { orderBy: { sequenceNumber: 'desc' }, take: 30 },
-        teamStatistics: true,
-        playerStatistics: true,
-        officials: true,
-        rosters: { include: { player: true } },
-        lineups: { include: { player: true } },
-      },
-    });
-    if (!match) throw new AppError('Match not found', 404);
+  private static mapEvent(e: any): MatchEventData | null {
+    if (!e) return null;
+    return {
+      id: e.id,
+      seq: e.sequenceNumber,
+      team: e.teamSide ? teamFromSide(e.teamSide) : null,
+      action: e.type === 'ACTION_RECORDED' ? String((e.payload as any)?.action || 'ACTION') : e.type,
+      time: new Date(e.eventTimestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      payload: e.payload,
+      playerId: (e.payload as any)?.playerId || null,
+      clientEventId: e.clientEventId || null,
+    };
+  }
 
-    // ensure default lineup for current set if previous exists (best-effort)
-    try {
-      if (match.currentSetNumber > 1) {
-        await prisma.$transaction(async (tx) => {
-          await this.ensureDefaultLineupForSet(tx, matchId, 'HOME', match.currentSetNumber);
-          await this.ensureDefaultLineupForSet(tx, matchId, 'AWAY', match.currentSetNumber);
-        });
+  /**
+   * Returns a copy of the match's sets with the result of the point/correction
+   * applied, so a patch can describe set scores and flags without another read.
+   */
+  private static applyResultToSets(match: any, result: any): any[] {
+    const sets = (match.sets || []).map((s: any) => ({ ...s }));
+    if (!result?.set) return sets;
+    const idx = sets.findIndex((s: any) => s.setNumber === result.set.setNumber);
+    if (idx < 0) return sets;
+    sets[idx] = { ...sets[idx], ...result.set };
+    if (result.setCompleted) {
+      sets[idx] = { ...sets[idx], status: 'COMPLETED', winnerSide: result.winnerSide || sets[idx].winnerSide, pendingEnd: false };
+      if (!result.matchCompleted && result.nextSetNumber != null) {
+        const next = sets.find((s: any) => s.setNumber === result.nextSetNumber);
+        if (next) { next.status = 'READY'; next.servingSide = result.winnerSide || next.servingSide; }
       }
-    } catch {}
+    }
+    return sets;
+  }
 
-    const refreshed = await prisma.match.findUnique({
-      where: { id: matchId },
-      include: {
-        homeTeam: true, awayTeam: true, competition: true, tournament: true,
-        sets: { orderBy: { setNumber: 'asc' } },
-        events: { orderBy: { sequenceNumber: 'desc' }, take: 30 },
-        teamStatistics: true,
-        playerStatistics: true,
-        officials: true,
-        rosters: { include: { player: true } },
-        lineups: { include: { player: true } },
+  private static buildScorePatch(input: {
+    match: any;
+    sets: any[];
+    revision: number;
+    status: MatchStatus;
+    currentSetNumber: number;
+    servingSide: Side;
+    setsWonHome: number;
+    setsWonAway: number;
+    winnerSide?: Side | null;
+    lastEvent?: MatchEventData | null;
+  }): MatchStatePatch {
+    const { match, sets, revision, status, currentSetNumber, servingSide, setsWonHome, setsWonAway } = input;
+    const pseudoMatch = {
+      ...match,
+      status,
+      currentSetNumber,
+      servingSide,
+      setsWonHome,
+      setsWonAway,
+      winnerSide: input.winnerSide ?? match.winnerSide ?? null,
+    };
+    const cur = sets.find((s) => s.setNumber === currentSetNumber) || sets[0];
+    const scoreFor = (setNumber: number, key: 'homePoints' | 'awayPoints') =>
+      sets.find((s) => s.setNumber === setNumber)?.[key] ?? 0;
+    const setScoresA = Array.from({ length: 5 }, (_, i) => scoreFor(i + 1, 'homePoints'));
+    const setScoresB = Array.from({ length: 5 }, (_, i) => scoreFor(i + 1, 'awayPoints'));
+    const setHistory: SetHistoryItem[] = sets.map((s) => ({
+      number: s.setNumber,
+      scoreA: s.homePoints,
+      scoreB: s.awayPoints,
+      winner: s.winnerSide ? teamFromSide(s.winnerSide) : null,
+      pendingEnd: !!s.pendingEnd,
+    }));
+    const committedAt = new Date().toISOString();
+    return {
+      id: match.id,
+      revision,
+      server_time: committedAt,
+      status,
+      current_set: currentSetNumber,
+      server: teamFromSide(servingSide),
+      teams: {
+        A: { score: cur?.homePoints ?? 0, sets: setsWonHome },
+        B: { score: cur?.awayPoints ?? 0, sets: setsWonAway },
       },
+      set_scores: { A: setScoresA, B: setScoresB },
+      setHistory,
+      flags: this.computeFlags(pseudoMatch, sets),
+      lastEvent: input.lastEvent ?? null,
+      perf: { committedAt, source: 'patch' },
+    };
+  }
+
+  /** Emits a compact delta and patches the in-memory state; returns the patched state if cached. */
+  private static emitScorePatchAndGet(patch: MatchStatePatch, court: string | null | undefined): MatchState | null {
+    patch.perf = { ...(patch.perf || {}), emittedAt: new Date().toISOString() };
+    const patched = updateCachedMatchState(patch.id, (state) => applyMatchStatePatch(state, patch));
+    broadcastMatchStatePatch(patch, court || patched?.court || null);
+    this.scheduleRefresh(patch.id);
+    return patched;
+  }
+
+  private static scheduleRefresh(matchId: string): void {
+    scheduleMatchStateRefresh(
+      matchId,
+      () => this.buildMatchState(matchId),
+      (fresh) => { void broadcastMatchState(fresh); },
+      300,
+    );
+  }
+
+  /** Runs broadcast/stat side effects off the request path. */
+  private static queueSideEffect(matchId: string, eventType: string): void {
+    setImmediate(() => {
+      void onMatchEventCommitted(matchId, eventType).catch((e: any) => {
+        logger.warn(`Post-write side effect ${eventType} failed for ${matchId}: ${e?.message || e}`);
+      });
     });
-    const m = refreshed || match;
-    const curSet = m.sets.find(s => s.setNumber === m.currentSetNumber) || m.sets[0];
+  }
+
+  static async getMatchState(matchId: string, opts?: { force?: boolean }): Promise<MatchState> {
+    const started = Date.now();
+    const state = await getOrLoadMatchState(
+      matchId,
+      () => this.buildMatchState(matchId),
+      { maxAgeMs: opts?.force ? 0 : 30_000 },
+    );
+    state.perf = { ...(state.perf || {}), durationMs: Date.now() - started };
+    return state;
+  }
+
+  private static async buildMatchState(matchId: string): Promise<MatchState> {
+    // One round trip, only the columns the state contract needs. Previously
+    // this read twice (with a best-effort lineup transaction in between) and
+    // used include{} for every relation, which pulled full player rows.
+    const m: any = await withDbRetry(() => prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        id: true, status: true, winnerSide: true, currentSetNumber: true, bestOfSets: true,
+        setsToWin: true, regularSetPoints: true, finalSetPoints: true, minPointDifference: true,
+        rallyScoring: true, timeoutsPerSet: true, substitutionsPerSet: true, confirmSetEnd: true,
+        servingSide: true, setsWonHome: true, setsWonAway: true, revision: true,
+        tournamentName: true, division: true, court: true, venueType: true,
+        competitionId: true, tournamentId: true, matchNumber: true, scheduledAt: true,
+        startedAt: true, endedAt: true, homeTeamName: true, awayTeamName: true,
+        homeTeam: { select: { id: true, name: true, shortName: true, logoUrl: true, logoKey: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true } },
+        awayTeam: { select: { id: true, name: true, shortName: true, logoUrl: true, logoKey: true, logoThumbKey: true, primaryColor: true, secondaryColor: true, textColor: true } },
+        competition: { select: { name: true } },
+        tournament: { select: { name: true } },
+        sets: {
+          select: { setNumber: true, homePoints: true, awayPoints: true, targetPoints: true, minDifference: true, status: true, pendingEnd: true, winnerSide: true, servingSide: true },
+          orderBy: { setNumber: 'asc' },
+        },
+        events: {
+          select: { id: true, sequenceNumber: true, type: true, teamSide: true, payload: true, eventTimestamp: true, clientEventId: true },
+          orderBy: { sequenceNumber: 'desc' },
+          take: 30,
+        },
+        teamStatistics: {
+          select: { side: true, timeoutsUsed: true, substitutionsUsed: true, kills: true, errors: true, aces: true, blocks: true, digs: true, assists: true, sideoutAttempts: true, sideoutWins: true },
+        },
+        playerStatistics: {
+          select: { playerId: true, side: true, points: true, kills: true, errors: true, aces: true, blocks: true, digs: true, assists: true },
+        },
+        officials: { select: { role: true, fullName: true } },
+        rosters: {
+          select: {
+            side: true, playerId: true, jerseyNumber: true, isCaptain: true, isLibero: true,
+            player: { select: { displayName: true, firstName: true, lastName: true, position: true, jerseyNumber: true, photoKey: true, thumbKey: true, photoUrl: true } },
+          },
+        },
+        lineups: {
+          select: {
+            side: true, setNumber: true, playerId: true, rotationPos: true,
+            player: { select: { displayName: true, firstName: true, lastName: true, position: true, jerseyNumber: true, photoKey: true, thumbKey: true, photoUrl: true } },
+          },
+        },
+      },
+    }), 'getMatchState');
+    if (!m) throw new AppError('Match not found', 404);
+    const curSet = m.sets.find((s: any) => s.setNumber === m.currentSetNumber) || m.sets[0];
 
     const buildTeam = (teamKey: TeamId): TeamMatchState => {
       const side: Side = sideFromTeam(teamKey);
       const team = teamKey === 'A' ? m.homeTeam : m.awayTeam;
-      const stats = m.teamStatistics.find(s => s.side === side);
+      const stats = m.teamStatistics.find((s: any) => s.side === side);
       const playerStats = (m as any).playerStatistics?.filter((ps: any) => ps.side === side) || [];
       const statsFor = (id?: string | null): Record<string, number> | undefined => {
         if (!id) return undefined;
@@ -974,12 +1465,24 @@ export class MatchService {
           receptionAttempts: ps.receptionAttempts || 0, receptionErrors: ps.receptionErrors || 0,
         };
       };
-      const setLineup = m.lineups.filter(l => l.side === side && l.setNumber === m.currentSetNumber).sort((a,b)=>a.rotationPos-b.rotationPos);
-      const roster = m.rosters.filter(r => r.side === side).map(r => ({ id: r.playerId, jerseyNumber: r.jerseyNumber, name: r.player?.displayName || `${r.player?.firstName||''} ${r.player?.lastName||''}`.trim(), position: r.player?.position || null, isCaptain: r.isCaptain, isLibero: r.isLibero, stats: statsFor(r.playerId) }));
+      const setLineup = m.lineups.filter((l: any) => l.side === side && l.setNumber === m.currentSetNumber).sort((a: any,b: any)=>a.rotationPos-b.rotationPos);
+      const resolvePlayerPhoto = (p: any) => {
+        const photoUrl = resolveStoredUrl(p?.photoKey) || resolveStoredUrl(p?.photoUrl) || null;
+        const thumbUrl = resolveStoredUrl(p?.thumbKey) || photoUrl;
+        return { photoUrl, thumbUrl };
+      };
+      const roster = m.rosters.filter((r: any) => r.side === side).map((r: any) => {
+        const photo = resolvePlayerPhoto(r.player);
+        return { id: r.playerId, jerseyNumber: r.jerseyNumber, name: r.player?.displayName || `${r.player?.firstName||''} ${r.player?.lastName||''}`.trim(), position: r.player?.position || null, isCaptain: r.isCaptain, isLibero: r.isLibero, heightCm: r.player?.heightCm ?? null, photoUrl: photo.photoUrl, thumbUrl: photo.thumbUrl, stats: statsFor(r.playerId) };
+      });
       const onCourt: PlayerOnCourt[] = setLineup.length
-        ? setLineup.map(l => ({ id: l.playerId, jerseyNumber: l.player.jerseyNumber ?? roster.find(r=>r.id===l.playerId)?.jerseyNumber ?? null, name: l.player.displayName || `${l.player.firstName} ${l.player.lastName}`, position: l.player.position, isCaptain: !!roster.find(r=>r.id===l.playerId)?.isCaptain, isLibero: !!roster.find(r=>r.id===l.playerId)?.isLibero, stats: statsFor(l.playerId) }))
-        : roster.slice(0,6).map(r => ({ id: r.id, jerseyNumber: r.jerseyNumber, name: r.name, position: r.position, isCaptain: r.isCaptain, isLibero: r.isLibero, stats: r.stats }));
-      const bench = roster.filter(r => !onCourt.find(o => o.id === r.id));
+        ? setLineup.map((l: any) => {
+            const rosterPlayer = roster.find((r: any) => r.id === l.playerId);
+            const photo = resolvePlayerPhoto(l.player);
+            return { id: l.playerId, jerseyNumber: l.player.jerseyNumber ?? rosterPlayer?.jerseyNumber ?? null, name: l.player.displayName || `${l.player.firstName} ${l.player.lastName}`, position: l.player.position, isCaptain: !!rosterPlayer?.isCaptain, isLibero: !!rosterPlayer?.isLibero, heightCm: l.player.heightCm ?? rosterPlayer?.heightCm ?? null, photoUrl: photo.photoUrl || rosterPlayer?.photoUrl || null, thumbUrl: photo.thumbUrl || rosterPlayer?.thumbUrl || null, stats: statsFor(l.playerId) };
+          })
+        : roster.slice(0,6).map((r: any) => ({ id: r.id, jerseyNumber: r.jerseyNumber, name: r.name, position: r.position, isCaptain: r.isCaptain, isLibero: r.isLibero, heightCm: r.heightCm ?? null, photoUrl: r.photoUrl, thumbUrl: r.thumbUrl, stats: r.stats }));
+      const bench = roster.filter((r: any) => !onCourt.find((o: any) => o.id === r.id));
       const rotationOrder = Array.from({ length: 6 }, (_, i) => {
         const p = onCourt[i];
         return p ? (p.jerseyNumber ?? p.id ?? null) : null;
@@ -996,7 +1499,7 @@ export class MatchService {
         id: team?.id,
         name: team?.name || (teamKey === 'A' ? m.homeTeamName : m.awayTeamName),
         shortName: team?.shortName || (team?.name || (teamKey === 'A' ? m.homeTeamName : m.awayTeamName)).slice(0,4).toUpperCase(),
-        logoUrl: team?.logoUrl || null,
+        logoUrl: resolveStoredUrl(team?.logoKey) || resolveStoredUrl(team?.logoUrl) || null,
         primaryColor: team?.primaryColor || null,
         secondaryColor: team?.secondaryColor || null,
         textColor: team?.textColor || null,
@@ -1017,10 +1520,10 @@ export class MatchService {
 
     const teamA = buildTeam('A');
     const teamB = buildTeam('B');
-    const setScoresA = Array.from({ length: 5 }, (_, i) => m.sets.find(s => s.setNumber === i + 1)?.homePoints ?? 0);
-    const setScoresB = Array.from({ length: 5 }, (_, i) => m.sets.find(s => s.setNumber === i + 1)?.awayPoints ?? 0);
-    const setHistory: SetHistoryItem[] = m.sets.map(s => ({ number: s.setNumber, scoreA: s.homePoints, scoreB: s.awayPoints, winner: s.winnerSide ? teamFromSide(s.winnerSide) : null, pendingEnd: !!(s as any).pendingEnd }));
-    const events = m.events.map(e => ({
+    const setScoresA = Array.from({ length: 5 }, (_, i) => m.sets.find((s: any) => s.setNumber === i + 1)?.homePoints ?? 0);
+    const setScoresB = Array.from({ length: 5 }, (_, i) => m.sets.find((s: any) => s.setNumber === i + 1)?.awayPoints ?? 0);
+    const setHistory: SetHistoryItem[] = m.sets.map((s: any) => ({ number: s.setNumber, scoreA: s.homePoints, scoreB: s.awayPoints, winner: s.winnerSide ? teamFromSide(s.winnerSide) : null, pendingEnd: !!(s as any).pendingEnd }));
+    const events = m.events.map((e: any) => ({
       id: e.id,
       seq: e.sequenceNumber,
       team: e.teamSide ? teamFromSide(e.teamSide) : null,
@@ -1030,8 +1533,8 @@ export class MatchService {
       playerId: (e.payload as any)?.playerId || null,
       clientEventId: e.clientEventId || null,
     })).reverse();
-    const ref1 = m.officials.find(o => o.role === 'FIRST_REFEREE')?.fullName || '';
-    const ref2 = m.officials.find(o => o.role === 'SECOND_REFEREE')?.fullName || '';
+    const ref1 = m.officials.find((o: any) => o.role === 'FIRST_REFEREE')?.fullName || '';
+    const ref2 = m.officials.find((o: any) => o.role === 'SECOND_REFEREE')?.fullName || '';
 
     const state: MatchState = {
       id: m.id,
@@ -1061,13 +1564,17 @@ export class MatchService {
       flags: this.computeFlags(m, m.sets),
       revision: m.revision,
       lastEvent: events.length ? events[events.length - 1] : null,
+      perf: { builtAt: new Date().toISOString(), source: 'db' },
       rules: { bestOfSets: m.bestOfSets, setsToWin: m.setsToWin, regularSetPoints: m.regularSetPoints, finalSetPoints: m.finalSetPoints, minPointDifference: m.minPointDifference, rallyScoring: m.rallyScoring, timeoutsPerSet: m.timeoutsPerSet, substitutionsPerSet: m.substitutionsPerSet, confirmSetEnd: (m as any).confirmSetEnd !== false },
     };
     return state;
   }
 
   private static async emitAndGet(matchId: string): Promise<MatchState> {
-    const state = await this.getMatchState(matchId);
+    // Non-scoring writes (roster, setup, undo, status) change parts of the state
+    // a compact patch cannot express safely, so drop the cache and rebuild.
+    invalidateMatchState(matchId);
+    const state = await this.getMatchState(matchId, { force: true });
     await broadcastMatchState(state);
     return state;
   }
@@ -1245,8 +1752,13 @@ export class MatchService {
     }
   }
 
-  private static async bumpRevision(tx: Tx, matchId: string) {
-    await tx.match.update({ where: { id: matchId }, data: { revision: { increment: 1 } } });
+  private static async bumpRevision(tx: Tx, matchId: string): Promise<number> {
+    const updated = await tx.match.update({
+      where: { id: matchId },
+      data: { revision: { increment: 1 } },
+      select: { revision: true },
+    });
+    return Number((updated as any)?.revision ?? 0);
   }
 
   private static async applyTeamPlayerStat(tx: Tx, matchId: string, side: Side, statKey: string, delta: number, playerId?: string) {

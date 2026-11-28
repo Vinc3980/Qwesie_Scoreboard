@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GRAPHIC_TEMPLATES, toState } from '../src/services/broadcast.service.js';
+import { GRAPHIC_TEMPLATES, toState, buildIntroSequenceSteps } from '../src/services/broadcast.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,5 +75,33 @@ describe('template-to-component coverage', () => {
       .filter(id => !new RegExp(`(^|\\n)\\s*${id}\\s*:`, 'm').test(block));
 
     expect(missing, `Missing TEMPLATE_COMPONENTS entries for: ${missing.join(', ')}`).toEqual([]);
+  });
+});
+describe('intro sequence generation', () => {
+  it('generates expected sequence for roster sizes 6,7,12,14', () => {
+    const cases = [
+      { a: 6, b: 6, pagesA: 2, pagesB: 2 },
+      { a: 7, b: 7, pagesA: 3, pagesB: 3 },
+      { a: 12, b: 12, pagesA: 4, pagesB: 4 },
+      { a: 14, b: 14, pagesA: 5, pagesB: 5 },
+    ];
+    for (const c of cases) {
+      const steps = buildIntroSequenceSteps({ teamARosterSize: c.a, teamBRosterSize: c.b, setNumber: 1 });
+      expect(steps[0].template).toBe('MATCH_INTRO');
+      const aProfiles = steps.filter(s => s.template === 'TEAM_SQUAD_PROFILES' && s.payload.team === 'A');
+      const bProfiles = steps.filter(s => s.template === 'TEAM_SQUAD_PROFILES' && s.payload.team === 'B');
+      expect(aProfiles).toHaveLength(c.pagesA);
+      expect(bProfiles).toHaveLength(c.pagesB);
+      expect(aProfiles[aProfiles.length - 1].payload.page).toBe(c.pagesA - 1);
+      expect(steps.some(s => s.template === 'TEAM_ROSTER_GRID' && s.payload.team === 'A')).toBe(true);
+      expect(steps.some(s => s.template === 'TEAM_ROSTER_GRID' && s.payload.team === 'B')).toBe(true);
+      expect(steps.some(s => s.template === 'STARTING_SIX_COURT' && s.payload.team === 'A')).toBe(true);
+      expect(steps.some(s => s.template === 'STARTING_SIX_COURT' && s.payload.team === 'B')).toBe(true);
+      expect(steps[steps.length - 1].template).toBe('STARTING_SIX_COURT');
+      // last page can have 1-3 players
+      const lastA = c.a - (c.pagesA - 1) * 3;
+      expect(lastA).toBeGreaterThanOrEqual(1);
+      expect(lastA).toBeLessThanOrEqual(3);
+    }
   });
 });

@@ -82,6 +82,7 @@ function isFullScreenGraphic(scene: any, status: string) {
   const raw = String(scene?.scene || 'PLAY');
   const activeScene = status === 'COMPLETED' && raw === 'PLAY' ? 'FINAL' : raw;
   const template = scene?.template || (status === 'COMPLETED' && raw === 'PLAY' ? 'FINAL_MATCH_RESULT' : null);
+  if (String(template || '').toUpperCase() === 'PLAYER_ACTION') return false;
   const hasGraphic = !!template || (activeScene !== 'PLAY' && SCENES_WITH_GRAPHIC.has(activeScene));
   return hasGraphic && activeScene !== 'PLAY';
 }
@@ -176,6 +177,22 @@ function GraphicsInner({ stream, status }: { stream: any; status: string }) {
   );
 }
 
+function usePreloadMatchImages(match: any) {
+  useEffect(() => {
+    if (!match) return;
+    const urls = new Set<string>();
+    for (const side of ['A', 'B'] as const) {
+      const t = match?.teams?.[side];
+      if (t?.logoUrl) urls.add(String(t.logoUrl));
+      for (const p of [...(t?.lineup || []), ...(t?.bench || [])]) {
+        if (p?.photoUrl) urls.add(String(p.photoUrl));
+        if (p?.thumbUrl) urls.add(String(p.thumbUrl));
+      }
+    }
+    urls.forEach((u) => { if (/^(https?:\/\/|\/)/.test(u)) { const img = new Image(); img.decoding = 'async'; img.src = u; } });
+  }, [match?.id, match?.revision]);
+}
+
 function ResolvedOutput({ court, mode }: { court: string; mode: 'scorebug'|'graphics'|'all' }) {
   const [search] = useSearchParams();
   const debug = search.get('debug') === '1';
@@ -212,6 +229,7 @@ function ResolvedOutput({ court, mode }: { court: string; mode: 'scorebug'|'grap
   }, [court]);
 
   const stream = useOutputStream({ matchId: courtMatch.matchId || undefined, court, clientType: mode === 'all' ? 'all' : mode === 'scorebug' ? 'scorebug' : mode === 'graphics' ? 'graphics' : 'other', debug });
+  usePreloadMatchImages(stream.match);
   const status = normStatus(stream.match, courtMatch.status);
   const revision = stream.revision;
   const preMatch = status === 'SCHEDULED' || status === 'READY';

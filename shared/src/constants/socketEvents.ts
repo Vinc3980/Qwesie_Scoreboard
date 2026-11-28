@@ -7,6 +7,7 @@ export const SOCKET_EVENTS = {
   MATCH_LEAVE_COURT: 'match:leave_court',
   MATCH_SNAPSHOT: 'match:snapshot',
   MATCH_STATE: 'match:state',
+  MATCH_STATE_PATCH: 'match:state:patch',
   MATCH_ERROR: 'match:error',
   MATCH_FINISHED: 'match:finished',
   BROADCAST_GRAPHIC_STATE: 'broadcast:graphic:state',

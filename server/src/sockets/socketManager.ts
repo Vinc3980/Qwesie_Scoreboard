@@ -1,6 +1,6 @@
 import { Server as HttpServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
-import { MatchState, SOCKET_EVENTS } from '@qwesie/shared';
+import { MatchState, MatchStatePatch, SOCKET_EVENTS } from '@qwesie/shared';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../config/database.js';
 import { MatchService } from '../services/match.service.js';
@@ -30,6 +30,20 @@ function normalizeClientType(v: any): 'scorebug' | 'graphics' | 'console' | 'oth
 
 export function initSocketServer(httpServer: HttpServer, corsOrigin: string): SocketIOServer {
   io = new SocketIOServer(httpServer, {
+    // Single Render instance: websocket is preferred, long-polling is the
+    // fallback for restrictive networks. No Redis adapter is required because
+    // the app is intentionally one process; add @socket.io/redis-adapter before
+    // scaling horizontally.
+    transports: ['websocket', 'polling'],
+    allowUpgrades: true,
+    pingInterval: 25_000,
+    pingTimeout: 20_000,
+    maxHttpBufferSize: 1_000_000,
+    perMessageDeflate: { threshold: 2_048 },
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2 * 60_000,
+      skipMiddlewares: true,
+    },
     cors: {
       origin: corsOrigin === '*' ? '*' : corsOrigin.split(','),
       methods: ['GET', 'POST'],
@@ -113,11 +127,26 @@ export function initSocketServer(httpServer: HttpServer, corsOrigin: string): So
   if (!heartbeatTimer) {
     heartbeatTimer = setInterval(() => {
       if (!io) return;
-      io.emit(SOCKET_EVENTS.HEARTBEAT, { ts: new Date().toISOString() });
+      const ts = new Date().toISOString();
+      io.emit(SOCKET_EVENTS.HEARTBEAT, { ts, serverTime: ts, connected: io.engine.clientsCount });
     }, 5000);
   }
 
   return io;
+}
+
+/** Close Socket.IO (and its heartbeat) during graceful shutdown. */
+export async function closeSocketServer(): Promise<void> {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  const current = io;
+  io = null;
+  if (!current) return;
+  await new Promise<void>((resolve) => {
+    current.close(() => resolve());
+  });
 }
 
 export function getSocketServer(): SocketIOServer {
@@ -137,16 +166,29 @@ export function getConnectedClientsInfo() {
 
 export async function broadcastMatchState(state: MatchState): Promise<void> {
   if (!io) return;
+  const payload = { ...state, perf: { ...(state.perf || {}), emittedAt: new Date().toISOString() } };
   const matchRoom = roomForMatch(state.id);
-  io.to(matchRoom).emit(SOCKET_EVENTS.MATCH_STATE, state);
-  if (state.court) io.to(roomForCourt(state.court)).emit(SOCKET_EVENTS.MATCH_STATE, state);
+  io.to(matchRoom).emit(SOCKET_EVENTS.MATCH_STATE, payload);
+  if (state.court) io.to(roomForCourt(state.court)).emit(SOCKET_EVENTS.MATCH_STATE, payload);
 }
 
 export async function broadcastMatchSnapshot(state: MatchState): Promise<void> {
   if (!io) return;
+  const payload = { ...state, perf: { ...(state.perf || {}), emittedAt: new Date().toISOString() } };
   const matchRoom = roomForMatch(state.id);
-  io.to(matchRoom).emit(SOCKET_EVENTS.MATCH_SNAPSHOT, state);
-  if (state.court) io.to(roomForCourt(state.court)).emit(SOCKET_EVENTS.MATCH_SNAPSHOT, state);
+  io.to(matchRoom).emit(SOCKET_EVENTS.MATCH_SNAPSHOT, payload);
+  if (state.court) io.to(roomForCourt(state.court)).emit(SOCKET_EVENTS.MATCH_SNAPSHOT, payload);
+}
+
+/**
+ * Emits only the changed score/revision fields. Consoles and OBS clients apply
+ * it to the last full state they hold, so a point does not need a full state
+ * rebuild on the wire.
+ */
+export function broadcastMatchStatePatch(patch: MatchStatePatch, court?: string | null): void {
+  if (!io) return;
+  io.to(roomForMatch(patch.id)).emit(SOCKET_EVENTS.MATCH_STATE_PATCH, patch);
+  if (court) io.to(roomForCourt(court)).emit(SOCKET_EVENTS.MATCH_STATE_PATCH, patch);
 }
 
 export function broadcastMatchError(matchId: string, error: string): void {

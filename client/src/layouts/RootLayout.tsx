@@ -3,7 +3,7 @@ import { Outlet, NavLink, Link, useLocation, useNavigate } from 'react-router-do
 import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
 import {
   LayoutDashboard, CalendarDays, RadioTower, Users, UserSquare2, Trophy, BarChart3,
-  Archive, FileText, Settings, ChevronRight, Shield, Tv, Moon, Sun, ExternalLink, HelpCircle, Command, Palette
+  Archive, FileText, Settings, ChevronRight, Shield, Tv, Moon, Sun, ExternalLink, HelpCircle, Command, Palette, ListOrdered, CalendarRange
 } from 'lucide-react';
 import { getSocket } from '../services/socket.js';
 import { cn } from '../utils/cn.js';
@@ -25,10 +25,14 @@ const navGroups: NavGroup[] = [
     { to: '/teams', label: 'Teams', icon: Users, section: 'teams' },
     { to: '/players', label: 'Players', icon: UserSquare2, section: 'players' },
     { to: '/competitions', label: 'Competitions', icon: Trophy, section: 'competitions' },
+    { to: '/leaderboard', label: 'Leaderboard', icon: ListOrdered, section: 'competitions' },
+    { to: '/leaderboards', label: 'Leaderboard Hub', icon: Trophy, section: 'competitions' },
+    { to: '/fixtures', label: 'Fixtures', icon: CalendarRange, section: 'matches' },
   ]},
   { id: 'golive', label: 'Go Live', items: [
     { to: '/live', label: 'Live Control', icon: RadioTower, section: 'live' },
     { to: '/design/scorebug', label: 'Scorebug Designer', icon: Palette, section: 'design' },
+    { to: '/design/leaderboard', label: 'Leaderboard Designer', icon: Palette, section: 'design' },
   ]},
   { id: 'review', label: 'Review', items: [
     { to: '/statistics', label: 'Statistics', icon: BarChart3, section: 'statistics' },
@@ -68,6 +72,9 @@ function buildBreadcrumbs(pathname: string) {
   if (pathname.startsWith('/teams')) { crumbs.push({ label: 'Prepare' }, { label: 'Teams' }); return crumbs; }
   if (pathname.startsWith('/players')) { crumbs.push({ label: 'Prepare' }, { label: 'Players' }); return crumbs; }
   if (pathname.startsWith('/competitions')) { crumbs.push({ label: 'Prepare' }, { label: 'Competitions' }); return crumbs; }
+  if (pathname.startsWith('/leaderboards')) { crumbs.push({ label: 'Prepare' }, { label: 'Leaderboard Hub' }); return crumbs; }
+  if (pathname.startsWith('/leaderboard')) { crumbs.push({ label: 'Prepare' }, { label: 'Leaderboard' }); return crumbs; }
+  if (pathname.startsWith('/fixtures')) { crumbs.push({ label: 'Prepare' }, { label: 'Fixtures' }); return crumbs; }
   if (pathname.startsWith('/live-classic')) { crumbs.push({ label: 'Go Live' }, { label: 'Live Control (Classic)' }); return crumbs; }
   if (pathname.startsWith('/live')) {
     const sp = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
@@ -79,6 +86,7 @@ function buildBreadcrumbs(pathname: string) {
     return crumbs;
   }
   if (pathname.startsWith('/design/scorebug')) { crumbs.push({ label: 'Go Live' }, { label: 'Scorebug Designer' }); return crumbs; }
+  if (pathname.startsWith('/design/leaderboard')) { crumbs.push({ label: 'Go Live' }, { label: 'Leaderboard Designer' }); return crumbs; }
   if (pathname.startsWith('/broadcast')) { crumbs.push({ label: 'Go Live' }, { label: 'Graphics' }); return crumbs; }
   if (pathname.startsWith('/statistics')) { crumbs.push({ label: 'Review' }, { label: 'Statistics' }); return crumbs; }
   if (pathname.startsWith('/archive')) { crumbs.push({ label: 'Review' }, { label: 'Match Archive' }); return crumbs; }

@@ -2,8 +2,10 @@ datasource db {
   provider  = "postgresql"
   // Pooled connection for the running app (Neon PgBouncer).
   url       = env("DATABASE_URL")
-  // Direct connection for Prisma Migrate, pg_dump and other session-level work.
-  directUrl = env("DATABASE_URL_UNPOOLED")
+  // Direct connection for Prisma Migrate and session-level work. Migrations
+  // should use the direct (non-pooled) Neon endpoint; the running app uses
+  // the pooled DATABASE_URL above.
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -142,18 +144,27 @@ model Role {
 }
 
 model Team {
-  id             String   @id @default(cuid())
-  name           String
-  shortName      String   @map("short_name") // 3-4 chars for broadcast
-  code           String?  @unique
-  city           String?
-  country        String?
-  logoUrl        String?  @map("logo_url")
-  primaryColor   String?  @map("primary_color")
-  secondaryColor String?  @map("secondary_color")
-  textColor      String?  @map("text_color")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id                   String   @id @default(cuid())
+  name                 String
+  shortName            String   @map("short_name") // 3-4 chars for broadcast
+  code                 String?  @unique
+  city                 String?
+  country              String?
+  logoUrl              String?  @map("logo_url")
+  logoKey              String?  @map("logo_key")
+  logoThumbKey         String?  @map("logo_thumb_key")
+  coachName            String?  @map("coach_name")
+  coachPhotoKey        String?  @map("coach_photo_key")
+  coachPhotoThumbKey   String?  @map("coach_photo_thumb_key")
+  assistantCoachName   String?  @map("assistant_coach_name")
+  managerName          String?  @map("manager_name")
+  teamPhotoKey         String?  @map("team_photo_key")
+  teamPhotoThumbKey    String?  @map("team_photo_thumb_key")
+  primaryColor         String?  @map("primary_color")
+  secondaryColor       String?  @map("secondary_color")
+  textColor            String?  @map("text_color")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
   players         Player[]
   homeMatches     Match[]                @relation("HomeTeam")
@@ -175,7 +186,10 @@ model Player {
   displayName  String?   @map("display_name")
   dateOfBirth  DateTime? @map("date_of_birth")
   jerseyNumber Int?      @map("jersey_number")
+  heightCm     Int?      @map("height_cm")
   photoUrl     String?   @map("photo_url")
+  photoKey     String?   @map("photo_key")
+  thumbKey     String?   @map("thumb_key")
   position     String?   // OH/MB/S/OPP/L/DS
   isCaptain    Boolean   @default(false) @map("is_captain")
   isLibero     Boolean   @default(false) @map("is_libero")
@@ -199,17 +213,23 @@ model Competition {
   season           String?
   organizer        String?
   description      String?
+  pointsRule       Json?    @map("points_rule")
+  standingsConfig  Json?    @map("standings_config")
   scorebugThemeId  String?  @map("scorebug_theme_id")
   scorebugTheme    ScorebugTheme? @relation("CompetitionScorebugTheme", fields: [scorebugThemeId], references: [id], onDelete: SetNull)
+  leaderboardThemeId String? @map("leaderboard_theme_id")
+  leaderboardTheme LeaderboardTheme? @relation("CompetitionDefaultLeaderboardTheme", fields: [leaderboardThemeId], references: [id], onDelete: SetNull)
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   tournaments      Tournament[]
   matches          Match[]
   scorebugThemes   ScorebugTheme[] @relation("CompetitionScorebugThemes")
+  leaderboardThemes LeaderboardTheme[] @relation("CompetitionLeaderboardThemes")
 
   @@index([name])
   @@index([scorebugThemeId])
+  @@index([leaderboardThemeId])
   @@map("competitions")
 }
 
@@ -266,11 +286,14 @@ model Match {
   awayTeamName    String      @default("AWAY TEAM") @map("away_team_name")
   tournamentName  String?     @map("tournament_name")
   division        String?     
+  group           String?
+  round           String?
   court           String?
   venueType       String?     @map("venue_type")
   ruleset         String?     @map("ruleset")
   matchNumber     String?     @map("match_number")
   scheduledAt     DateTime?   @map("scheduled_at")
+  forfeitWinnerSide TeamSide? @map("forfeit_winner_side")
 
   status          MatchStatus @default(SCHEDULED)
   currentSetNumber Int        @default(1) @map("current_set_number")
@@ -313,7 +336,11 @@ model Match {
   scorebugTheme      ScorebugTheme? @relation("MatchScorebugTheme", fields: [scorebugThemeId], references: [id], onDelete: SetNull)
 
   @@index([status])
+  @@index([status, court])
+  @@index([status, scheduledAt])
   @@index([competitionId])
+  @@index([competitionId, division])
+  @@index([competitionId, scheduledAt])
   @@index([tournamentId])
   @@index([venueId])
   @@index([homeTeamId])
@@ -599,6 +626,28 @@ model ScorebugTheme {
   @@index([isDefault])
   @@index([isBuiltIn])
   @@map("scorebug_themes")
+}
+
+model LeaderboardTheme {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  kind          String   @default("leaderboard") // leaderboard | player
+  config        Json
+  isDefault     Boolean  @default(false) @map("is_default")
+  competitionId String?  @map("competition_id")
+  competition   Competition? @relation("CompetitionLeaderboardThemes", fields: [competitionId], references: [id], onDelete: SetNull)
+  isBuiltIn     Boolean  @default(false) @map("is_built_in")
+  version       Int      @default(1)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  defaultForCompetitions Competition[] @relation("CompetitionDefaultLeaderboardTheme")
+
+  @@index([competitionId])
+  @@index([isDefault])
+  @@index([kind])
+  @@map("leaderboard_themes")
 }
 
 model AuditLog {

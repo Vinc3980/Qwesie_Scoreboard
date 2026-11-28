@@ -32,13 +32,18 @@ services:
       # Neon: paste the DIRECT (non-pooled) connection string here. Prisma
       # Migrate uses it on startup. Optional on single-URL hosts: the container
       # falls back to DATABASE_URL when this is unset.
+      - key: DIRECT_URL
+        sync: false
       - key: DATABASE_URL_UNPOOLED
         sync: false
-      # Free instances have no pg_dump binary and no persistent disk.
-      - key: BACKUP_ON_START
+      # Hosted database backup path: Neon branching / point-in-time restore.
+      # Local pg_dump scheduler is disabled by default.
+      - key: BACKUP_ENABLED
         value: "false"
-      - key: BACKUP_INTERVAL_MINUTES
-        value: "60"
+      - key: KEEPWARM_ENABLED
+        value: "false"
+      - key: KEEPWARM_INTERVAL_MINUTES
+        value: "4"
 
 # Optional: Render's free Postgres (expires after 30 days - prefer Neon).
 # Uncomment if you want a one-click database for a short trial, then set

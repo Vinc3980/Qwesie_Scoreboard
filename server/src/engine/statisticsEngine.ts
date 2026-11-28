@@ -391,6 +391,7 @@ export function computeScopeStats(
       if (action === 'KILL') {
         teams[side].totalAttackKills += 1; teams[side]._attackAttemptsKnown += 1; flags.attack = true;
         if (player){ player._known.attack=true; player.attackKills=(player.attackKills||0)+1; player.attackAttempts=(player.attackAttempts||0)+1; }
+        if (p.assistPlayerId) { const ap = getPlayer(p.assistPlayerId, side); teams[side].assists += 1; if (ap) ap.assists = (ap.assists || 0) + 1; }
       } else if (action === 'ATTACK_ERROR') {
         teams[side].attackErrors += 1; teams[side].errors += 1; teams[side]._attackAttemptsKnown += 1; flags.attack = true;
         if (player){ player._known.attack=true; player.attackErrors=(player.attackErrors||0)+1; player.attackAttempts=(player.attackAttempts||0)+1; }
