@@ -36,6 +36,10 @@ services:
         sync: false
       - key: DATABASE_URL_UNPOOLED
         sync: false
+      # Uploads on the free plan are ephemeral (lost on redeploy). Use S3-
+      # compatible storage (e.g. Neon Object Storage, R2) for durable files.
+      - key: STORAGE_DRIVER
+        value: local
       # Hosted database backup path: Neon branching / point-in-time restore.
       # Local pg_dump scheduler is disabled by default.
       - key: BACKUP_ENABLED

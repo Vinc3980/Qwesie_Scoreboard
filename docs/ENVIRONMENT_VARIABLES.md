@@ -7,7 +7,8 @@ Single reference table for server/runtime configuration. Defaults shown are thos
 | `PORT` | `5000` | No | HTTP/Socket.IO server port. |
 | `NODE_ENV` | `development` | No | `development`, `production`, or `test`. Affects security checks, dev auto-login, and default client serving behavior. |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5433/qwesie_tv?schema=public` | Yes (real env) | PostgreSQL connection string for Prisma/server. Use a valid DB/credentials in your environment. On Neon use the pooled (`-pooler`) string. |
-| `DATABASE_URL_UNPOOLED` | *(falls back to `DATABASE_URL`)* | No | Direct (non-pooled) PostgreSQL connection string used by Prisma Migrate and `pg_dump`. On Neon use the host without `-pooler`. |
+| `DIRECT_URL` | *(falls back to `DATABASE_URL_UNPOOLED`, then `DATABASE_URL`)* | No | Direct (non-pooled) PostgreSQL connection string used by Prisma Migrate. On Neon use the host without `-pooler`. |
+| `DATABASE_URL_UNPOOLED` | *(falls back to `DIRECT_URL`, then `DATABASE_URL`)* | No | Legacy alias for `DIRECT_URL`; also used by `pg_dump` backups. On Neon use the host without `-pooler`. |
 | `CORS_ORIGIN` | `http://localhost:5173` | No | Comma-separated allowed browser origins, or `*` (trusted LAN only). Server additionally auto-allows private LAN/dev/server-port origins (localhost/127.0.0.1 and RFC1918 addresses on dev/server/common ports) for match-day access. |
 | `CLIENT_DIST_DIR` | *(empty)* | No | Optional path to built client `dist` directory to serve from the server. If empty, server checks common `client/dist` locations. |
 | `SERVE_CLIENT` | *(unset → prod=true, dev=false)* | No | `true`/`false`. When true and client dist exists, server serves the UI and SPA routes on `PORT`. |

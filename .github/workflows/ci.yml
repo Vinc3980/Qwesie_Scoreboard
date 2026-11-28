@@ -25,6 +25,7 @@ jobs:
           --health-retries=10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
       DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
       JWT_SECRET: ci-test-secret-change-me-32chars-minimum
       NODE_ENV: test
@@ -67,6 +68,7 @@ jobs:
           --health-retries=10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
       DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/qwesie_tv_test?schema=public
       JWT_SECRET: ci-test-secret-change-me-32chars-minimum
       NODE_ENV: test

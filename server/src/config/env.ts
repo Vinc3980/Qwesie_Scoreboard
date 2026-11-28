@@ -135,8 +135,9 @@ if (env.NODE_ENV === 'production') {
     process.exit(1);
   }
   if (env.STORAGE_DRIVER === 'local') {
-    console.error('FATAL: STORAGE_DRIVER=local is not allowed in production. Configure S3-compatible storage.');
-    process.exit(1);
+    // Render's free filesystem is ephemeral; uploads survive until the next
+    // deploy/restart. Warn instead of blocking startup so the app stays usable.
+    console.warn('WARNING: STORAGE_DRIVER=local in production. Uploaded files are ephemeral (lost on redeploy). Configure S3-compatible storage for durable uploads.');
   }
   if (env.STORAGE_DRIVER === 's3') {
     const missing = ['STORAGE_BUCKET', 'STORAGE_ENDPOINT', 'STORAGE_ACCESS_KEY_ID', 'STORAGE_SECRET_ACCESS_KEY', 'STORAGE_PUBLIC_BASE_URL']

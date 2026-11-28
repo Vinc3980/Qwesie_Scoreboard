@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS "leaderboard_themes" (
   "is_built_in" BOOLEAN NOT NULL DEFAULT false,
   "version" INTEGER NOT NULL DEFAULT 1,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "leaderboard_themes_pkey" PRIMARY KEY ("id")
 );
 
@@ -20,10 +20,14 @@ CREATE INDEX IF NOT EXISTS "leaderboard_themes_is_default_idx" ON "leaderboard_t
 CREATE INDEX IF NOT EXISTS "leaderboard_themes_kind_idx" ON "leaderboard_themes"("kind");
 CREATE INDEX IF NOT EXISTS "competitions_leaderboard_theme_id_idx" ON "competitions"("leaderboard_theme_id");
 
-DO  BEGIN
+DO $$
+BEGIN
   ALTER TABLE "competitions" ADD CONSTRAINT "competitions_leaderboard_theme_id_fkey" FOREIGN KEY ("leaderboard_theme_id") REFERENCES "leaderboard_themes"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL; END ;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-DO  BEGIN
+DO $$
+BEGIN
   ALTER TABLE "leaderboard_themes" ADD CONSTRAINT "leaderboard_themes_competition_id_fkey" FOREIGN KEY ("competition_id") REFERENCES "competitions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL; END ;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
