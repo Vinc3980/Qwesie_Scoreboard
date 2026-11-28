@@ -213,6 +213,9 @@ model Competition {
   season           String?
   organizer        String?
   description      String?
+  logoKey          String?  @map("logo_key")
+  logoThumbKey     String?  @map("logo_thumb_key")
+  logoUrl          String?  @map("logo_url")
   pointsRule       Json?    @map("points_rule")
   standingsConfig  Json?    @map("standings_config")
   scorebugThemeId  String?  @map("scorebug_theme_id")

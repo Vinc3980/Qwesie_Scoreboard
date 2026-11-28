@@ -16,7 +16,7 @@ export const scorebugScoreChangeAnimationSchema = z.enum(['flip', 'slide', 'puls
 export const scorebugShadowPresetSchema = z.enum(['none', 'soft', 'medium', 'strong']);
 
 export const scorebugLayoutSchema = z.object({
-  variant: z.enum(['classic', 'compact', 'wide']).default('classic'),
+  variant: z.enum(['classic', 'compact', 'wide', 'stacked', 'mini', 'pill', 'set-table', 'bottom-bar', 'top-bar', 'side-panel']).default('classic'),
   anchor: scorebugAnchorSchema.default('top-left'),
   offsetX: z.number().finite().min(-400).max(400).default(0),
   offsetY: z.number().finite().min(-400).max(400).default(0),
@@ -94,6 +94,45 @@ export const scorebugAnimationSchema = z.object({
   pointFlash: z.boolean().default(true),
 });
 
+export const scorebugSizingSchema = z.object({
+  widthMode: z.enum(['auto', 'fixed', 'maxPercent']).default('auto'),
+  widthPx: z.number().int().min(220).max(1920).default(1100),
+  maxWidthPercent: z.number().int().min(20).max(100).default(45),
+  rowHeight: z.number().int().min(36).max(120).default(74),
+  teamBlockWidth: z.number().int().min(0).max(700).default(400),
+  nameWidth: z.number().int().min(0).max(420).default(200),
+  logoSize: z.number().int().min(0).max(96).default(40),
+  setsBoxWidth: z.number().int().min(0).max(140).default(72),
+  pointsBoxWidth: z.number().int().min(0).max(220).default(124),
+  setBadgeWidth: z.number().int().min(0).max(220).default(132),
+  competitionWidth: z.number().int().min(0).max(420).default(220),
+  fontScale: z.number().finite().min(0.7).max(1.6).default(1),
+  padding: z.number().int().min(0).max(32).default(12),
+  gap: z.number().int().min(0).max(24).default(0),
+});
+
+export const scorebugStackedSchema = z.object({
+  rowHeight: z.number().int().min(36).max(64).default(52),
+  width: z.number().int().min(280).max(560).default(380),
+  infoStripPosition: z.enum(['below', 'above']).default('below'),
+  showCompetitionLogo: z.boolean().default(true),
+  showCompetitionName: z.boolean().default(true),
+  showSetLabel: z.boolean().default(true),
+  showRound: z.boolean().default(false),
+  showMatchNumber: z.boolean().default(false),
+  showCourt: z.boolean().default(false),
+  previousSets: z.enum(['pips', 'columns', 'none']).default('pips'),
+  serveIndicator: z.enum(['dot', 'ball', 'bar']).default('dot'),
+  teamNameStyle: z.enum(['short', 'full', 'code']).default('short'),
+  logoSize: z.number().int().min(20).max(56).default(34),
+  logoShape: z.enum(['circle', 'rounded', 'square']).default('rounded'),
+  teamAccent: z.enum(['bar', 'tint']).default('bar'),
+  textAlign: z.enum(['left', 'center']).default('left'),
+  anchorCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-left'),
+  compactness: z.enum(['ultra', 'standard', 'large']).default('standard'),
+  expandStripOnSetBreak: z.boolean().default(true),
+});
+
 export const scorebugThemeConfigSchema = z.object({
   schemaVersion: z.literal(SCOREBUG_THEME_SCHEMA_VERSION).default(SCOREBUG_THEME_SCHEMA_VERSION),
   layout: scorebugLayoutSchema.default({}),
@@ -102,6 +141,8 @@ export const scorebugThemeConfigSchema = z.object({
   typography: scorebugTypographySchema.default({}),
   content: scorebugContentSchema.default({}),
   animation: scorebugAnimationSchema.default({}),
+  sizing: scorebugSizingSchema.default({}),
+  stacked: scorebugStackedSchema.default({}),
 });
 
 export type ScorebugThemeConfig = z.infer<typeof scorebugThemeConfigSchema>;
@@ -150,6 +191,8 @@ function preset(name: string, description: string, patch: Partial<ScorebugThemeC
     typography: { ...base.typography, ...(patch.typography || {}) },
     content: { ...base.content, ...(patch.content || {}) },
     animation: { ...base.animation, ...(patch.animation || {}) },
+    sizing: { ...base.sizing, ...((patch as any).sizing || {}) },
+    stacked: { ...base.stacked, ...((patch as any).stacked || {}) },
   });
   return {
     id: `builtin-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
@@ -165,16 +208,18 @@ function preset(name: string, description: string, patch: Partial<ScorebugThemeC
 }
 
 export const BUILTIN_SCOREBUG_THEMES: ScorebugThemeRecord[] = [
-  preset('Classic', 'Current Qwesie scorebug look.', {}),
+  preset('Classic', 'Current Qwesie scorebug look.', { sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 100 } }),
   preset('Compact', 'Smaller footprint for dense broadcasts.', {
     layout: { ...defaultScorebugThemeConfig().layout, variant: 'compact', scale: 0.95 },
     shape: { ...defaultScorebugThemeConfig().shape, slantLeft: 10 },
     typography: { ...defaultScorebugThemeConfig().typography, nameMax: 38, scoreSize: 50, setsSize: 42 },
     content: { ...defaultScorebugThemeConfig().content, showTimeoutPips: false },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 100, rowHeight: 74, teamBlockWidth: 370, nameWidth: 170, setsBoxWidth: 72, pointsBoxWidth: 124, setBadgeWidth: 132, competitionWidth: 220, logoSize: 40, fontScale: 1 },
   }),
   preset('Wide', 'Full team names and wider blocks.', {
     layout: { ...defaultScorebugThemeConfig().layout, variant: 'wide' },
     content: { ...defaultScorebugThemeConfig().content, nameDisplay: 'full' },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 100, rowHeight: 74, teamBlockWidth: 500, nameWidth: 320, setsBoxWidth: 72, pointsBoxWidth: 124, setBadgeWidth: 132, competitionWidth: 220, logoSize: 40, fontScale: 1 },
   }),
   preset('Minimal', 'Clean rectangular scorebug with reduced chrome.', {
     shape: { ...defaultScorebugThemeConfig().shape, preset: 'rectangular', slantLeft: 0, slantRight: 0, borderWidth: 0, shadow: 'soft' },
@@ -194,6 +239,54 @@ export const BUILTIN_SCOREBUG_THEMES: ScorebugThemeRecord[] = [
       setPointAccent: '#facc15', matchPointAccent: '#ff3b30', opacity: 1,
     },
     typography: { ...defaultScorebugThemeConfig().typography, weight: 900, letterSpacing: 0.04 },
+  }),
+  preset('Stacked Classic', 'Compact stacked corner scorebug with competition strip.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'stacked', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rounded', cornerRadius: 10, slantLeft: 0, slantRight: 0, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+    stacked: { ...defaultScorebugThemeConfig().stacked, compactness: 'standard' },
+  }),
+  preset('Stacked Minimal', 'Clean stacked scorebug with minimal chrome.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'stacked', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rectangular', cornerRadius: 0, slantLeft: 0, slantRight: 0, borderWidth: 0, shadow: 'soft' },
+    colors: { ...defaultScorebugThemeConfig().colors, background: '#111827', scoreBackground: '#111827', setsBackground: '#1f2937', setBadgeBackground: '#374151', setBadgeText: '#f9fafb' },
+    stacked: { ...defaultScorebugThemeConfig().stacked, compactness: 'standard', showCompetitionLogo: false, showRound: false },
+  }),
+  preset('Stacked Glass', 'Translucent stacked scorebug.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'stacked', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rounded', cornerRadius: 14, slantLeft: 0, slantRight: 0, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)', shadow: 'medium' },
+    colors: { ...defaultScorebugThemeConfig().colors, background: 'rgba(15,23,42,0.62)', scoreBackground: 'rgba(15,23,42,0.38)', setsBackground: 'rgba(30,41,59,0.55)', setBadgeBackground: 'rgba(226,232,240,0.9)', opacity: 0.98 },
+    stacked: { ...defaultScorebugThemeConfig().stacked, compactness: 'standard' },
+  }),
+  preset('Mini', 'Two logos and two scores only.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'mini', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rounded', cornerRadius: 10, slantLeft: 0, slantRight: 0 },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 45, rowHeight: 52, teamBlockWidth: 110, nameWidth: 0, logoSize: 28, setsBoxWidth: 0, pointsBoxWidth: 52, setBadgeWidth: 0, competitionWidth: 0, fontScale: 1 },
+  }),
+  preset('Pill', 'Single rounded row with score and set label.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'pill', anchor: 'top-center' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'pill', cornerRadius: 48, slantLeft: 0, slantRight: 0 },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 45, rowHeight: 52, teamBlockWidth: 220, nameWidth: 120, logoSize: 28, setsBoxWidth: 44, pointsBoxWidth: 0, setBadgeWidth: 90, competitionWidth: 0, fontScale: 1 },
+  }),
+  preset('Set Table', 'Mini box score with set columns.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'set-table', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rounded', cornerRadius: 8, slantLeft: 0, slantRight: 0 },
+    content: { ...defaultScorebugThemeConfig().content, showSetHistory: true },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 45, rowHeight: 44, teamBlockWidth: 180, nameWidth: 120, logoSize: 28, setsBoxWidth: 44, pointsBoxWidth: 52, setBadgeWidth: 0, competitionWidth: 0, fontScale: 1 },
+  }),
+  preset('Bottom Bar', 'Full-width lower broadcast bar.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'bottom-bar', anchor: 'bottom-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rectangular', cornerRadius: 0, slantLeft: 0, slantRight: 0 },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 100, rowHeight: 64, teamBlockWidth: 360, nameWidth: 200, logoSize: 36, setsBoxWidth: 72, pointsBoxWidth: 96, setBadgeWidth: 120, competitionWidth: 260, fontScale: 1 },
+  }),
+  preset('Top Bar', 'Thin full-width top ticker strip.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'top-bar', anchor: 'top-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rectangular', cornerRadius: 0, slantLeft: 0, slantRight: 0 },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 100, rowHeight: 48, teamBlockWidth: 320, nameWidth: 180, logoSize: 30, setsBoxWidth: 60, pointsBoxWidth: 80, setBadgeWidth: 100, competitionWidth: 220, fontScale: 0.95 },
+  }),
+  preset('Side Panel', 'Vertical column for tall/side layouts.', {
+    layout: { ...defaultScorebugThemeConfig().layout, variant: 'side-panel', anchor: 'middle-left' },
+    shape: { ...defaultScorebugThemeConfig().shape, preset: 'rounded', cornerRadius: 12, slantLeft: 0, slantRight: 0 },
+    sizing: { ...defaultScorebugThemeConfig().sizing, maxWidthPercent: 30, rowHeight: 56, teamBlockWidth: 220, nameWidth: 120, logoSize: 32, setsBoxWidth: 48, pointsBoxWidth: 64, setBadgeWidth: 0, competitionWidth: 0, fontScale: 1 },
   }),
 ];
 
@@ -216,7 +309,7 @@ export function resolveScorebugTheme(input: ScorebugThemeResolutionInput): Score
 export function migrateLegacyScorebugSettings(settings: any): Partial<ScorebugThemeConfig> {
   const s = settings || {};
   const variant = String(s.variant || 'classic').toLowerCase();
-  const normalizedVariant = variant === 'compact' ? 'compact' : variant === 'wide' ? 'wide' : 'classic';
+  const normalizedVariant = variant === 'compact' ? 'compact' : variant === 'wide' ? 'wide' : variant === 'stacked' ? 'stacked' : 'classic';
   const position = String(s.position || 'top-left').toLowerCase();
   const anchor = (['top-left','top-center','top-right','middle-left','middle-center','middle-right','bottom-left','bottom-center','bottom-right'].includes(position) ? position : 'top-left') as ScorebugAnchor;
   const scaleRaw = Number(s.scale ?? 1);

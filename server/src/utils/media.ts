@@ -32,6 +32,16 @@ export function shapePlayerMedia<T extends Record<string, any> | null | undefine
   } as T;
 }
 
+export function shapeCompetitionMedia<T extends Record<string, any> | null | undefined>(comp: T): T {
+  if (!comp) return comp;
+  const logo = resolveImage(comp.logoKey, comp.logoThumbKey, comp.logoUrl);
+  return {
+    ...comp,
+    logoUrl: logo.url,
+    logoThumbUrl: logo.thumbUrl,
+  } as T;
+}
+
 export async function deleteStoredKeys(keys: Array<string | null | undefined>) {
   const storage = getStorage();
   const unique = Array.from(new Set(keys.map(k => String(k || '').trim()).filter(k => isObjectKey(k))));

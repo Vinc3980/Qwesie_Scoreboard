@@ -11,9 +11,11 @@ type Props = {
   bg?: OverlayBg;
   /** 'window' (default, OBS/fullscreen) or 'container' (fits parent box for console monitors). */
   fit?: 'window' | 'container';
+  stageWidth?: number;
+  stageHeight?: number;
 };
 
-export const ScaledStage: React.FC<Props> = ({ children, match, className = '', hideCursor = true, bg = 'transparent', fit = 'window' }) => {
+export const ScaledStage: React.FC<Props> = ({ children, match, className = '', hideCursor = true, bg = 'transparent', fit = 'window', stageWidth = 1920, stageHeight = 1080 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
@@ -26,7 +28,7 @@ export const ScaledStage: React.FC<Props> = ({ children, match, className = '', 
         const rect = el.getBoundingClientRect();
         const w = rect.width || el.clientWidth || 1;
         const h = rect.height || el.clientHeight || 1;
-        setScale(Math.min(w / 1920, h / 1080));
+        setScale(Math.min(w / stageWidth, h / stageHeight));
       };
       update();
       const ro = new ResizeObserver(update);
@@ -38,12 +40,12 @@ export const ScaledStage: React.FC<Props> = ({ children, match, className = '', 
       const w = window.innerWidth;
       const h = window.innerHeight;
       // Uniform fit, anchored to top-left (no centering offsets, no stretch).
-      setScale(Math.min(w / 1920, h / 1080));
+      setScale(Math.min(w / stageWidth, h / stageHeight));
     };
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
-  }, [fit]);
+  }, [fit, stageWidth, stageHeight]);
 
   useEffect(() => {
     if (fit === 'container') return;
@@ -64,17 +66,20 @@ export const ScaledStage: React.FC<Props> = ({ children, match, className = '', 
   }, [match]);
 
   if (fit === 'container') {
-    const scaledW = 1920 * scale;
-    const scaledH = 1080 * scale;
+    const scaledW = stageWidth * scale;
+    const scaledH = stageHeight * scale;
     return (
       <div ref={containerRef} className={`broadcast-stage-root ${className}`} style={{ ...overlayBgStyle(bg), position: 'relative', width: '100%', height: '100%', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: scaledW, height: scaledH, position: 'relative', flex: '0 0 auto' }}>
           <div
             ref={rootRef}
             className="broadcast-canvas"
+            data-stage-width={stageWidth}
+            data-stage-height={stageHeight}
+            data-stage-scale={scale}
             style={{
-              width: 1920,
-              height: 1080,
+              width: stageWidth,
+              height: stageHeight,
               position: 'absolute',
               left: 0,
               top: 0,
@@ -95,9 +100,12 @@ export const ScaledStage: React.FC<Props> = ({ children, match, className = '', 
       <div
         ref={rootRef}
         className="broadcast-canvas"
+        data-stage-width={stageWidth}
+        data-stage-height={stageHeight}
+        data-stage-scale={scale}
         style={{
-          width: 1920,
-          height: 1080,
+          width: stageWidth,
+          height: stageHeight,
           position: 'absolute',
           left: 0,
           top: 0,

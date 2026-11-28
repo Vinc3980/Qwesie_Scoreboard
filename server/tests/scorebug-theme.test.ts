@@ -94,6 +94,13 @@ describe('scorebug theme service', () => {
     const cfg = scorebugThemeConfigSchema.parse({ layout: { variant: 'compact', scale: 1.1 } });
     expect(cfg.layout.variant).toBe('compact');
     expect(cfg.layout.scale).toBe(1.1);
+    const stacked = scorebugThemeConfigSchema.parse({ layout: { variant: 'stacked' }, stacked: { rowHeight: 48, width: 360, infoStripPosition: 'above', previousSets: 'columns', serveIndicator: 'bar', compactness: 'ultra' } });
+    expect(stacked.layout.variant).toBe('stacked');
+    expect(stacked.stacked.rowHeight).toBe(48);
+    expect(stacked.stacked.infoStripPosition).toBe('above');
+    expect(stacked.stacked.compactness).toBe('ultra');
+    expect(() => scorebugThemeConfigSchema.parse({ stacked: { rowHeight: 10 } })).toThrow();
+    expect(() => scorebugThemeConfigSchema.parse({ stacked: { width: 999 } })).toThrow();
   });
 
   it('delete detaches references so outputs fall back', async () => {
@@ -110,5 +117,16 @@ describe('scorebug theme service', () => {
     expect(res.deleted).toBe(true);
     expect(prismaMock.match.updateMany).toHaveBeenCalledWith({ where: { scorebugThemeId: 't1' }, data: { scorebugThemeId: null } });
     expect(prismaMock.competition.updateMany).toHaveBeenCalledWith({ where: { scorebugThemeId: 't1' }, data: { scorebugThemeId: null } });
+  });
+
+  it('includes stacked built-in presets and preserves stacked legacy variant', async () => {
+    const { BUILTIN_SCOREBUG_THEMES, migrateLegacyScorebugSettings, scorebugThemeConfigFromLegacy } = await import('@qwesie/shared');
+    const stacked = BUILTIN_SCOREBUG_THEMES.filter((t: any) => t.config?.layout?.variant === 'stacked');
+    expect(stacked.map((t: any) => t.name)).toEqual(expect.arrayContaining(['Stacked Classic', 'Stacked Minimal', 'Stacked Glass']));
+    const migrated = migrateLegacyScorebugSettings({ variant: 'stacked' });
+    expect((migrated.layout as any).variant).toBe('stacked');
+    const cfg = scorebugThemeConfigFromLegacy({ variant: 'stacked', showLogos: false });
+    expect(cfg.layout.variant).toBe('stacked');
+    expect(cfg.content.showLogos).toBe(false);
   });
 });

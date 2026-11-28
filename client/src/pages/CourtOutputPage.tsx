@@ -36,45 +36,71 @@ function useScoreFlash(m: any) {
 }
 
 function useBanner(m: any, scene: any, revision: number) {
-  const [banner, setBanner] = useState<{ text: string; color?: string; textColor?: string } | null>(null);
+  const [banner, setBanner] = useState<{ text: string; color?: string; textColor?: string; kind?: string } | null>(null);
   const bannerKey = useRef<string>('');
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick(x => x + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
   useEffect(() => {
     if (!m) { setBanner(null); return; }
     const f = m.flags || {};
-    let next: { text: string; color?: string; textColor?: string } | null = null;
+    let next: { text: string; color?: string; textColor?: string; kind?: string } | null = null;
     let key = '';
     const teamName = (side: TeamKey | null) => side ? (m.teams?.[side]?.shortName || m.teams?.[side]?.name || `TEAM ${side}`) : '';
     const themeCfg: any = (scene?.scorebug?.theme || scene?.scorebugTheme?.config || null);
     const mpColor = themeCfg?.colors?.matchPointAccent || (f.matchPoint ? 'var(--team-' + f.matchPoint.toLowerCase() + ')' : undefined);
     const spColor = themeCfg?.colors?.setPointAccent || (f.setPoint ? 'var(--team-' + f.setPoint.toLowerCase() + ')' : undefined);
-    if (f.matchPoint) { key = `mp-${f.matchPoint}-${m.current_set}-${m.teams?.[f.matchPoint]?.score}`; next = { text: `MATCH POINT - ${teamName(f.matchPoint)}`, color: mpColor, textColor: '#fff' }; }
-    else if (f.setPoint) { key = `sp-${f.setPoint}-${m.current_set}-${m.teams?.[f.setPoint]?.score}`; next = { text: `SET POINT - ${teamName(f.setPoint)}`, color: spColor, textColor: '#fff' }; }
-    else if (f.setWon) { key = `sw-${f.setWon}-${m.current_set}`; next = { text: 'SET WON', color: 'var(--team-' + f.setWon.toLowerCase() + ')', textColor: 'var(--team-' + f.setWon.toLowerCase() + '-text)' }; }
-    else if (f.courtSwitchDue) { key = `cs-${m.current_set}-${m.teams?.A?.score}-${m.teams?.B?.score}`; next = { text: 'COURT SWITCH', color: '#334155', textColor: '#fff' }; }
+    const timerEndsAt = scene?.timerEndsAt ? Date.parse(String(scene.timerEndsAt)) : NaN;
+    const remaining = Number.isFinite(timerEndsAt) ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000)) : null;
+    const countdown = remaining != null ? ` ${remaining}s` : '';
+
+    if (f.matchPoint) { key = `mp-${f.matchPoint}-${m.current_set}-${m.teams?.[f.matchPoint]?.score}`; next = { text: `MATCH POINT - ${teamName(f.matchPoint)}`, color: mpColor, textColor: '#fff', kind: 'match-point' }; }
+    else if (f.setPoint) { key = `sp-${f.setPoint}-${m.current_set}-${m.teams?.[f.setPoint]?.score}`; next = { text: `SET POINT - ${teamName(f.setPoint)}`, color: spColor, textColor: '#fff', kind: 'set-point' }; }
+    else if (f.setWon) { key = `sw-${f.setWon}-${m.current_set}`; next = { text: 'SET WON', color: 'var(--team-' + f.setWon.toLowerCase() + ')', textColor: 'var(--team-' + f.setWon.toLowerCase() + '-text)', kind: 'set-won' }; }
+    else if (f.courtSwitchDue) { key = `cs-${m.current_set}-${m.teams?.A?.score}-${m.teams?.B?.score}`; next = { text: 'COURT SWITCH', color: '#334155', textColor: '#fff', kind: 'court-switch' }; }
 
     const le = m.lastEvent;
     const lastEventType = String(le?.action || le?.payload?.type || '').toUpperCase();
     const lastPayload = le?.payload || {};
-    if (!next && (lastEventType.includes('TIMEOUT_CALLED') || lastEventType.includes('TIMEOUT'))) {
+    const sceneIsTimeout = String(scene?.scene || '').toUpperCase() === 'TIMEOUT';
+    if (!next && (sceneIsTimeout || lastEventType.includes('TIMEOUT_CALLED') || lastEventType.includes('TIMEOUT'))) {
       const side = (le?.team || (lastPayload.teamSide === 'HOME' ? 'A' : lastPayload.teamSide === 'AWAY' ? 'B' : null)) as TeamKey | null;
-      const isTech = /TECHNICAL/i.test(JSON.stringify(lastPayload)) || (scene?.scene === 'TIMEOUT' && /TECHNICAL/i.test(String(scene?.payload?.type || '')));
-      if (isTech) { key = `tt-${le?.id || le?.seq || revision}`; next = { text: 'TECHNICAL TIMEOUT', color: '#334155', textColor: '#fff' }; }
-      else if (side) { key = `to-${side}-${le?.id || le?.seq || revision}`; next = { text: `TIMEOUT - ${teamName(side)}`, color: 'var(--team-' + side.toLowerCase() + ')', textColor: 'var(--team-' + side.toLowerCase() + '-text)' }; }
+      const isTech = /TECHNICAL/i.test(JSON.stringify(lastPayload)) || /TECHNICAL/i.test(String(scene?.payload?.type || ''));
+      if (isTech) { key = `tt-${le?.id || le?.seq || revision}-${scene?.scene || ''}`; next = { text: `TECHNICAL TIMEOUT${countdown}`, color: '#334155', textColor: '#fff', kind: 'technical-timeout' }; }
+      else if (side) { key = `to-${side}-${le?.id || le?.seq || revision}-${scene?.scene || ''}`; next = { text: `TIMEOUT - ${teamName(side)}${countdown}`, color: 'var(--team-' + side.toLowerCase() + ')', textColor: 'var(--team-' + side.toLowerCase() + '-text)', kind: 'timeout' }; }
+      else if (sceneIsTimeout) { key = `to-scene-${revision}`; next = { text: `TIMEOUT${countdown}`, color: '#334155', textColor: '#fff', kind: 'timeout' }; }
     }
 
-    if (next && key && key !== bannerKey.current) {
-      bannerKey.current = key;
-      setBanner(next);
-      const transient = /SET WON|TIMEOUT|COURT SWITCH/.test(next.text);
+    // Between sets: short set summary
+    const st = String(m?.status || '').toUpperCase();
+    const isBetweenSets = st === 'BETWEEN_SETS' || String(scene?.scene || '').toUpperCase() === 'SET_BREAK';
+    if (!next && isBetweenSets) {
+      const sets = Array.isArray(m?.setHistory) ? m.setHistory : [];
+      const last = [...sets].reverse().find((s: any) => Number.isFinite(Number(s?.scoreA)) && Number.isFinite(Number(s?.scoreB)) && (s?.winner || s?.scoreA > 0 || s?.scoreB > 0));
+      if (last) {
+        key = `ss-${last.number}-${last.scoreA}-${last.scoreB}`;
+        next = { text: `SET ${last.number} - ${last.scoreA}-${last.scoreB}`, color: '#334155', textColor: '#fff', kind: 'set-summary' };
+      }
+    }
+
+    if (next) {
+      const textChanged = next.text !== banner?.text || next.kind !== banner?.kind || next.color !== banner?.color;
+      if (key !== bannerKey.current || textChanged) {
+        bannerKey.current = key;
+        setBanner(next);
+      }
+      const transient = next.kind === 'set-won' || next.kind === 'court-switch' || (next.kind === 'set-summary' && String(scene?.scene || '').toUpperCase() !== 'SET_BREAK' && st !== 'BETWEEN_SETS');
       if (transient) {
-        const t = window.setTimeout(() => setBanner(curr => (curr?.text === next!.text ? null : curr)), 5000);
+        const t = window.setTimeout(() => setBanner(curr => (curr?.kind === next!.kind && curr?.text === next!.text ? null : curr)), 5000);
         return () => window.clearTimeout(t);
       }
-    } else if (!next) {
-      if (/MATCH POINT|SET POINT/.test(banner?.text || '')) setBanner(null);
+    } else {
+      if (/MATCH POINT|SET POINT|TIMEOUT|SET \d+ -/.test(banner?.text || '')) setBanner(null);
       bannerKey.current = key;
     }
-  }, [m?.flags?.setPoint, m?.flags?.matchPoint, m?.flags?.setWon, m?.flags?.courtSwitchDue, m?.lastEvent?.id, m?.lastEvent?.seq, m?.teams?.A?.score, m?.teams?.B?.score, scene?.scene, revision]);
+  }, [m?.flags?.setPoint, m?.flags?.matchPoint, m?.flags?.setWon, m?.flags?.courtSwitchDue, m?.lastEvent?.id, m?.lastEvent?.seq, m?.teams?.A?.score, m?.teams?.B?.score, m?.status, m?.setHistory, scene?.scene, scene?.timerEndsAt, scene?.payload?.type, revision, tick]);
   return banner;
 }
 
@@ -92,12 +118,12 @@ function ScorebugInner({ stream, status, hiddenByGraphic = false }: { stream: an
   const settings = useMemo(() => {
     const s = scene?.scorebug || {};
     const variant = String(s.variant || 'classic').toLowerCase();
-    const normalizedVariant = variant === 'compact' ? 'compact' : variant === 'wide' ? 'wide' : 'classic';
+    const normalizedVariant = variant === 'compact' ? 'compact' : variant === 'wide' ? 'wide' : variant === 'stacked' ? 'stacked' : 'classic';
     const position = String(s.position || 'top-left').toLowerCase();
     const scale = clamp(Number(s.scale || 1) || 1, 0.5, 2);
     return {
       visible: s.visible !== false,
-      variant: normalizedVariant as 'classic'|'compact'|'wide',
+      variant: normalizedVariant as 'classic'|'compact'|'wide'|'stacked',
       position,
       scale,
       showSetHistory: !!s.showSetHistory,
@@ -139,6 +165,7 @@ function ScorebugInner({ stream, status, hiddenByGraphic = false }: { stream: an
             status={st}
             scoreFlash={scoreFlash}
             banner={banner}
+            timerEndsAt={scene?.timerEndsAt ?? null}
             forceShow={true}
           />
         </motion.div>

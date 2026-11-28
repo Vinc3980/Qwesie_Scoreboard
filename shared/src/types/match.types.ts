@@ -111,7 +111,10 @@ export interface MatchState {
   setHistory: SetHistoryItem[];
   server: TeamId;
   tournament: string;
+  competitionName?: string | null;
+  competitionLogoUrl?: string | null;
   division: string;
+  round?: string | null;
   court: string;
   venueType?: string | null;
   competitionId?: string | null;
@@ -285,7 +288,7 @@ export interface OutputSceneState {
   startedAt: string | null;
   scorebug: {
     visible: boolean;
-    variant?: string | null; // classic | compact | wide
+    variant?: string | null; // classic | compact | wide | stacked
     position?: string | null;
     scale?: number | null;
     showSetHistory?: boolean;

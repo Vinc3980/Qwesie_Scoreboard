@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/database.js';
 import { getCompetitionStandings, invalidateStandingsCache, normalizePointsRule, normalizeStandingsConfig } from '../services/standings.service.js';
+import { deleteStoredKeys, shapeCompetitionMedia } from '../utils/media.js';
 const ok = (res: Response, data: any, message?: string) => res.json({ success: true, data, message, timestamp: new Date().toISOString() });
 
 function parsePointsRule(b: any) {
@@ -13,29 +14,36 @@ function parseStandingsConfig(b: any) {
 }
 
 export class CompetitionsController {
-  static async list(_req: Request, res: Response, next: NextFunction) { try { ok(res, await prisma.competition.findMany({ orderBy: { createdAt: 'desc' }, include: { tournaments: true, _count: { select: { matches: true } } } })); } catch(e){next(e);} }
-  static async get(req: Request, res: Response, next: NextFunction) { try { ok(res, await prisma.competition.findUnique({ where: { id: req.params.id }, include: { tournaments: true } })); } catch(e){next(e);} }
+  static async list(_req: Request, res: Response, next: NextFunction) { try { const rows = await prisma.competition.findMany({ orderBy: { createdAt: 'desc' }, include: { tournaments: true, _count: { select: { matches: true } } } }); ok(res, rows.map(shapeCompetitionMedia)); } catch(e){next(e);} }
+  static async get(req: Request, res: Response, next: NextFunction) { try { const row = await prisma.competition.findUnique({ where: { id: req.params.id }, include: { tournaments: true } }); ok(res, shapeCompetitionMedia(row)); } catch(e){next(e);} }
   static async create(req: Request, res: Response, next: NextFunction) {
     try {
       const b=req.body||{};
       const data: any = { name:String(b.name||'Competition'), season:b.season||null, organizer:b.organizer||null, description:b.description||null };
+      if (b.logoKey !== undefined) data.logoKey = b.logoKey || null;
+      if (b.logoThumbKey !== undefined) data.logoThumbKey = b.logoThumbKey || null;
+      if (b.logoUrl !== undefined) data.logoUrl = b.logoUrl || null;
       const pr = parsePointsRule(b); if (pr !== undefined) data.pointsRule = pr as any;
       const sc = parseStandingsConfig(b); if (sc !== undefined) data.standingsConfig = sc;
-      ok(res, await prisma.competition.create({ data }), 'Competition created');
+      const row = await prisma.competition.create({ data });
+      ok(res, shapeCompetitionMedia(row), 'Competition created');
     } catch(e){next(e);}
   }
   static async update(req: Request, res: Response, next: NextFunction) {
     try {
+      const existing = await prisma.competition.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ success:false, error:{ message:'Competition not found' }, timestamp: new Date().toISOString() });
       const b=req.body||{}; const data:any={};
-      for(const k of ['name','season','organizer','description']) if(b[k]!==undefined) data[k]=b[k];
+      for(const k of ['name','season','organizer','description','logoKey','logoThumbKey','logoUrl']) if(b[k]!==undefined) data[k]=b[k] || null;
       const pr = parsePointsRule(b); if (pr !== undefined) data.pointsRule = pr as any;
       const sc = parseStandingsConfig(b); if (sc !== undefined) data.standingsConfig = sc;
       const row = await prisma.competition.update({ where:{id:req.params.id}, data });
+      if (data.logoKey !== undefined && data.logoKey !== (existing as any).logoKey) await deleteStoredKeys([(existing as any).logoKey, (existing as any).logoThumbKey]);
       invalidateStandingsCache(req.params.id);
-      ok(res, row, 'Competition updated');
+      ok(res, shapeCompetitionMedia(row), 'Competition updated');
     } catch(e){next(e);}
   }
-  static async remove(req: Request, res: Response, next: NextFunction) { try { await prisma.competition.delete({ where:{id:req.params.id} }); invalidateStandingsCache(req.params.id); ok(res,{id:req.params.id},'Competition deleted'); } catch(e){next(e);} }
+  static async remove(req: Request, res: Response, next: NextFunction) { try { const existing = await prisma.competition.findUnique({ where:{id:req.params.id} }); await prisma.competition.delete({ where:{id:req.params.id} }); await deleteStoredKeys([(existing as any)?.logoKey, (existing as any)?.logoThumbKey]); invalidateStandingsCache(req.params.id); ok(res,{id:req.params.id},'Competition deleted'); } catch(e){next(e);} }
 
   static async standings(req: Request, res: Response, next: NextFunction) {
     try {
