@@ -84,6 +84,28 @@ if (!parsed.success) {
 
 const envData = parsed.data;
 
+// S3-compatible storage: Neon Object Storage injects AWS-standard variable
+// names. Accept them as fallbacks so the same credentials work here, and derive
+// the public base URL for public_read buckets when it is not set explicitly.
+if (envData.STORAGE_DRIVER === 's3') {
+  if (!envData.STORAGE_ENDPOINT) {
+    envData.STORAGE_ENDPOINT = String(process.env.AWS_ENDPOINT_URL_S3 || '').trim();
+  }
+  const awsRegion = String(process.env.AWS_REGION || '').trim();
+  if ((!envData.STORAGE_REGION || envData.STORAGE_REGION === 'auto') && awsRegion) {
+    envData.STORAGE_REGION = awsRegion;
+  }
+  if (!envData.STORAGE_ACCESS_KEY_ID) {
+    envData.STORAGE_ACCESS_KEY_ID = String(process.env.AWS_ACCESS_KEY_ID || '').trim();
+  }
+  if (!envData.STORAGE_SECRET_ACCESS_KEY) {
+    envData.STORAGE_SECRET_ACCESS_KEY = String(process.env.AWS_SECRET_ACCESS_KEY || '').trim();
+  }
+  if (!envData.STORAGE_PUBLIC_BASE_URL && envData.STORAGE_ENDPOINT && envData.STORAGE_BUCKET) {
+    envData.STORAGE_PUBLIC_BASE_URL = `${envData.STORAGE_ENDPOINT.replace(/\/+$/, '')}/${envData.STORAGE_BUCKET}`;
+  }
+}
+
 // Ensure defaults are visible to libraries that read from process.env (e.g. Prisma)
 for (const [k, v] of Object.entries(envData)) {
   if (process.env[k] == null || process.env[k] === '') process.env[k] = String(v);

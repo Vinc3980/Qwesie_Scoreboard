@@ -36,10 +36,21 @@ services:
         sync: false
       - key: DATABASE_URL_UNPOOLED
         sync: false
-      # Uploads on the free plan are ephemeral (lost on redeploy). Use S3-
-      # compatible storage (e.g. Neon Object Storage, R2) for durable files.
+      # Uploads: `local` is ephemeral (lost on redeploy). To make uploads durable,
+      # fill in the object-storage values below (Neon Object Storage, R2, S3,
+      # MinIO) and change STORAGE_DRIVER to `s3`. See docs/DEPLOY_RENDER_FREE.md.
       - key: STORAGE_DRIVER
         value: local
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
       # Hosted database backup path: Neon branching / point-in-time restore.
       # Local pg_dump scheduler is disabled by default.
       - key: BACKUP_ENABLED

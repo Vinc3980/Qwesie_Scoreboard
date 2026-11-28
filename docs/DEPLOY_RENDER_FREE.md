@@ -118,10 +118,11 @@ If you add a custom domain in Render, the links switch to that domain automatica
   one output/console connected while live.
 - **Restarts:** Render may restart free instances at any time. Socket.IO clients
   reconnect and resync automatically, but expect a brief interruption.
-- **Uploads are ephemeral:** team logos and player photos saved to local disk are
-  lost when the instance restarts or redeploys. Match data in Postgres is safe.
-  For permanent branding, upload logos again after a deploy, or add external object
-  storage (Cloudinary/S3/Supabase Storage) later.
+- **Uploads:** with `STORAGE_DRIVER=local` (default) team logos and player photos
+  are written to the container disk and are **lost on restart/redeploy**; match
+  data in Postgres is safe. For durable uploads use S3-compatible storage
+  (Neon Object Storage, Cloudflare R2, AWS S3, MinIO) — see
+  [Durable uploads](#7-durable-uploads-s3-compatible-storage).
 - **Backups:** free instances have no `pg_dump` and no persistent disk, so the
   in-app backup scheduler is disabled (`BACKUP_ON_START=false`). Use Neon's own
   backup/branching features.
@@ -131,7 +132,69 @@ If you add a custom domain in Render, the links switch to that domain automatica
 For a real event where downtime is unacceptable, upgrade the Render web service to
 the `0.5c-512mb` ($7/month) plan; it never sleeps and adds a persistent disk option.
 
-## 7. Deploying updates
+## 7. Durable uploads (S3-compatible storage)
+
+By default uploads go to the container's local disk, which is wiped on every
+deploy or restart. To keep team logos, player photos, and court diagrams, point
+the app at an S3-compatible bucket. **Neon Object Storage** is the least work
+here because it lives in the same Neon project and branches with the database.
+
+### Option A: Neon Object Storage (recommended)
+
+1. Declare a `public_read` bucket in `neon.ts`:
+
+   ```typescript
+   buckets: {
+     "qwesie-media": { access: "public_read" },
+   },
+   ```
+
+2. Create it and pull the credentials into `.env.local`:
+
+   ```bash
+   neon config plan      # preview
+   neon deploy           # create bucket + pull AWS_* vars
+   ```
+
+3. In Render → **Environment**, add:
+
+   | Variable | Value |
+   |---|---|
+   | `STORAGE_DRIVER` | `s3` |
+   | `STORAGE_BUCKET` | `qwesie-media` |
+   | `AWS_ENDPOINT_URL_S3` | `AWS_ENDPOINT_URL_S3` from `.env.local` |
+   | `AWS_REGION` | `AWS_REGION` from `.env.local` (e.g. `us-east-2`) |
+   | `AWS_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` from `.env.local` |
+   | `AWS_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` from `.env.local` |
+
+   The app reads the standard `AWS_*` names when the `STORAGE_*` equivalents are
+   empty, and derives the public URL as `<endpoint>/<bucket>`.
+
+4. Redeploy. New uploads are public at
+   `https://<branch>.storage.<region>.aws.neon.tech/qwesie-media/<key>`, which is
+   what the scoreboard and OBS overlays load.
+
+### Option B: Cloudflare R2 / AWS S3 / MinIO
+
+Set the explicit `STORAGE_*` variables instead:
+
+```
+STORAGE_DRIVER=s3
+STORAGE_BUCKET=<bucket>
+STORAGE_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+STORAGE_REGION=auto
+STORAGE_ACCESS_KEY_ID=<key>
+STORAGE_SECRET_ACCESS_KEY=<secret>
+STORAGE_PUBLIC_BASE_URL=https://cdn.example.com   # public bucket/CDN origin
+```
+
+The bucket must allow anonymous `GetObject` (or sit behind a CDN) because the
+app stores object keys and builds public URLs — it does not presign reads.
+
+> Images uploaded before the switch live on the old container disk and are gone.
+> Re-upload team logos and player photos after enabling object storage.
+
+## 8. Deploying updates
 
 Every push to `main` triggers a new Render deploy:
 
@@ -144,7 +207,7 @@ git push origin main
 Migrations run automatically on container start. Keep migrations backwards
 compatible when possible.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Check |
 |---|---|

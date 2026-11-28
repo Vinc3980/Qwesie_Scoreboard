@@ -7,9 +7,8 @@ let driver: StorageDriver | null = null;
 
 export function getStorage(): StorageDriver {
   if (driver) return driver;
-  if (env.NODE_ENV === 'production' && env.STORAGE_DRIVER === 'local') {
-    throw new Error('Local storage driver is not allowed in production');
-  }
+  // STORAGE_DRIVER=local is allowed in production as a fallback (ephemeral
+  // files, lost on redeploy); env.ts logs a warning at boot.
   driver = env.STORAGE_DRIVER === 's3' ? new S3StorageDriver() : new LocalStorageDriver();
   return driver;
 }

@@ -12,7 +12,14 @@ Single reference table for server/runtime configuration. Defaults shown are thos
 | `CORS_ORIGIN` | `http://localhost:5173` | No | Comma-separated allowed browser origins, or `*` (trusted LAN only). Server additionally auto-allows private LAN/dev/server-port origins (localhost/127.0.0.1 and RFC1918 addresses on dev/server/common ports) for match-day access. |
 | `CLIENT_DIST_DIR` | *(empty)* | No | Optional path to built client `dist` directory to serve from the server. If empty, server checks common `client/dist` locations. |
 | `SERVE_CLIENT` | *(unset → prod=true, dev=false)* | No | `true`/`false`. When true and client dist exists, server serves the UI and SPA routes on `PORT`. |
-| `UPLOADS_DIR` | `uploads` | No | Directory for uploaded assets (logos/media). Served at `/uploads`. |
+| `UPLOADS_DIR` | `uploads` | No | Directory for uploaded assets (logos/media) when `STORAGE_DRIVER=local`. Served at `/uploads`. Ephemeral on Render free. |
+| `STORAGE_DRIVER` | `local` | No | `local` or `s3`. Use `s3` for durable uploads (Neon Object Storage, R2, S3, MinIO). `local` in production logs a warning and loses files on redeploy. |
+| `STORAGE_BUCKET` | *(empty)* | With `s3` | Bucket name, e.g. `qwesie-media`. |
+| `STORAGE_ENDPOINT` | *(empty)* | With `s3` | S3 endpoint URL. Falls back to `AWS_ENDPOINT_URL_S3` (Neon injects this name). |
+| `STORAGE_REGION` | `auto` | No | Region. `auto`/empty falls back to `AWS_REGION` when available; Neon uses e.g. `us-east-2`. |
+| `STORAGE_ACCESS_KEY_ID` | *(empty)* | With `s3` | Access key. Falls back to `AWS_ACCESS_KEY_ID`. |
+| `STORAGE_SECRET_ACCESS_KEY` | *(empty)* | With `s3` | Secret key. Falls back to `AWS_SECRET_ACCESS_KEY`. |
+| `STORAGE_PUBLIC_BASE_URL` | *(derived)* | No | Public base for object URLs. When empty it is derived as `<endpoint>/<bucket>`, which is correct for a `public_read` bucket. Set it to a CDN origin to serve uploads through a CDN. |
 | `JWT_SECRET` | `qwesie-tv-development-secret-key-32chars` | **Yes in production** | JWT signing secret. In production the server exits if missing/weak/default or `< 32` chars. |
 | `JWT_COOKIE_NAME` | `qwesie_token` | No | Auth cookie name. |
 | `DEV_AUTO_LOGIN` | `false` | No | Development convenience only. When `true` and not production, injects a real non-VIEWER dev scorer user/session context; ignored/disabled in production. |
